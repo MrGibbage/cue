@@ -28,4 +28,7 @@ single-owner dashboard. LLM-assisted planning and candidate review are planned
 immediately after the MVP, not inside it.
 
 Read [the product design](docs/product-design.md), [MVP plan](docs/mvp.md),
-[migration plan](docs/migration-from-mvg.md), and [branding notes](docs/branding.md).
+[migration plan](docs/migration-from-mvg.md), [technical design](docs/technical-design.md),
+and [branding notes](docs/branding.md). The included `compose.example.yml` is
+the deployment/mount contract, not yet a runnable stack: application entry
+points will be added with implementation.
