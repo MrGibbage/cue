@@ -7,6 +7,7 @@ services:
     environment:
       CUE_DATABASE_URL: ${CUE_DATABASE_URL:-sqlite:////data/cue.sqlite3}
       CUE_MEDIA_ROOT: /media
+      CUE_EXPORT_ROOT: /data/exports
     user: "${CUE_PUID:-1000}:${CUE_PGID:-1000}"
     volumes:
       - ./data:/data
@@ -24,6 +25,7 @@ services:
       CUE_DATABASE_URL: ${CUE_DATABASE_URL:-sqlite:////data/cue.sqlite3}
       CUE_MEDIA_ROOT: /media
       CUE_STAGING_ROOT: /media/.cue-staging
+      CUE_EXPORT_ROOT: /data/exports
     user: "${CUE_PUID:-1000}:${CUE_PGID:-1000}"
     volumes:
       - ./data:/data

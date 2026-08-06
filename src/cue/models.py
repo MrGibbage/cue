@@ -208,6 +208,23 @@ class LibraryImportRow(Base):
     )
 
 
+class PlaylistExport(Base):
+    __tablename__ = "playlist_exports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    collection_id: Mapped[int] = mapped_column(ForeignKey("collections.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(32), default="previewed", index=True)
+    manifest_json: Mapped[str] = mapped_column(Text)
+    m3u8_relative_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    report_relative_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

@@ -20,6 +20,7 @@ from cue.models import (
     Job,
     LibraryImport,
     LibraryImportRow,
+    PlaylistExport,
     PublishedAsset,
     Recording,
     Role,
@@ -415,3 +416,107 @@ def approve_library_import(session: Session, library_import: LibraryImport, owne
         detail={"imported_rows": imported},
     )
     return imported
+
+
+def create_playlist_export_preview(
+    session: Session,
+    *,
+    collection: Collection,
+    owner: User,
+    name: str | None,
+    media_root: Path,
+    m3u_path_prefix: str | None,
+) -> PlaylistExport:
+    snapshot = session.scalar(
+        select(SourceSnapshot)
+        .where(SourceSnapshot.collection_id == collection.id, SourceSnapshot.status == "approved")
+        .order_by(SourceSnapshot.id.desc())
+    )
+    if snapshot is None:
+        raise ValueError("Collection has no approved source snapshot to export")
+    rows = session.execute(
+        select(CollectionEntry, Recording, CollectionResolution)
+        .join(Recording, CollectionEntry.recording_id == Recording.id)
+        .join(SourceRow, CollectionEntry.source_row_id == SourceRow.id)
+        .outerjoin(CollectionResolution, CollectionResolution.collection_entry_id == CollectionEntry.id)
+        .where(SourceRow.snapshot_id == snapshot.id)
+        .order_by(CollectionEntry.ordinal)
+    ).all()
+    resolved: list[dict[str, object]] = []
+    missing: list[dict[str, object]] = []
+    root = media_root.resolve()
+    for entry, recording, resolution in rows:
+        asset = session.scalar(
+            select(PublishedAsset).where(PublishedAsset.recording_id == recording.id).order_by(PublishedAsset.id)
+        )
+        display_name = f"{' & '.join(json.loads(recording.artists_json))} - {recording.title}"
+        if resolution is None or resolution.status != "published":
+            reason = resolution.status if resolution else "unresolved"
+            missing.append(_missing_export_item(entry, recording, display_name, reason))
+        elif asset is None:
+            missing.append(_missing_export_item(entry, recording, display_name, "asset_not_recorded"))
+        elif not (root / asset.relative_path).is_file():
+            missing.append(_missing_export_item(entry, recording, display_name, "file_missing"))
+        else:
+            resolved.append(
+                {
+                    "ordinal": entry.ordinal,
+                    "recording_id": recording.id,
+                    "display_name": display_name,
+                    "relative_path": asset.relative_path,
+                    "playlist_path": _playlist_path(asset.relative_path, m3u_path_prefix),
+                }
+            )
+    manifest = {
+        "collection_id": collection.id,
+        "source_snapshot_id": snapshot.id,
+        "resolved": resolved,
+        "missing": missing,
+    }
+    playlist_export = PlaylistExport(
+        owner_id=owner.id,
+        collection_id=collection.id,
+        name=(name or collection.name).strip(),
+        manifest_json=json.dumps(manifest, sort_keys=True),
+    )
+    session.add(playlist_export)
+    session.flush()
+    write_audit(
+        session,
+        actor_id=owner.id,
+        action="playlist_export.previewed",
+        entity_type="playlist_export",
+        entity_id=playlist_export.id,
+        detail={"resolved": len(resolved), "missing": len(missing)},
+    )
+    return playlist_export
+
+
+def approve_playlist_export(session: Session, playlist_export: PlaylistExport, owner: User) -> Job:
+    if playlist_export.status != "previewed":
+        raise ValueError("Playlist export has already been approved")
+    playlist_export.status = "approved"
+    playlist_export.approved_at = datetime.now(UTC).replace(tzinfo=None)
+    playlist_export.approved_by_id = owner.id
+    job = Job(owner_id=owner.id, kind="publish_m3u_export", payload_json=json.dumps({"export_id": playlist_export.id}))
+    session.add(job)
+    session.flush()
+    write_audit(
+        session,
+        actor_id=owner.id,
+        action="playlist_export.approved",
+        entity_type="playlist_export",
+        entity_id=playlist_export.id,
+        detail={"job_id": job.id},
+    )
+    return job
+
+
+def _missing_export_item(
+    entry: CollectionEntry, recording: Recording, display_name: str, reason: str
+) -> dict[str, object]:
+    return {"ordinal": entry.ordinal, "recording_id": recording.id, "display_name": display_name, "reason": reason}
+
+
+def _playlist_path(relative_path: str, prefix: str | None) -> str:
+    return f"{prefix.rstrip('/')}/{relative_path}" if prefix else relative_path

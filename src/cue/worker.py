@@ -15,8 +15,17 @@ from cue.config import Settings, get_settings
 from cue.db import create_db_engine, run_migrations
 from cue.library import publish_atomically, safe_filename
 from cue.logging import configure_logging
-from cue.models import CandidateAsset, CollectionEntry, CollectionResolution, PublishedAsset, Recording, SourceSnapshot
+from cue.models import (
+    CandidateAsset,
+    CollectionEntry,
+    CollectionResolution,
+    PlaylistExport,
+    PublishedAsset,
+    Recording,
+    SourceSnapshot,
+)
 from cue.providers import download_youtube, search_youtube, validate_video
+from cue.publishers import write_export_artifacts
 from cue.queue import claim_next_job, finish_job
 from cue.services import decide_resolution, queue_candidate_download, store_youtube_candidates
 
@@ -109,6 +118,20 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
         if not isinstance(candidate_id, int) or not isinstance(resolution_id, int):
             raise RuntimeError("Invalid download job payload")
         download_candidate(session, candidate_id, resolution_id, settings)
+    elif job.kind == "publish_m3u_export":
+        export_id = payload.get("export_id")
+        if not isinstance(export_id, int):
+            raise RuntimeError("Invalid playlist export job payload")
+        playlist_export = session.get(PlaylistExport, export_id)
+        if playlist_export is None or playlist_export.status != "approved":
+            raise RuntimeError("Playlist export is no longer approved")
+        m3u8_path, report_path, digest = write_export_artifacts(
+            settings.export_root, playlist_export.name, playlist_export.id, json.loads(playlist_export.manifest_json)
+        )
+        playlist_export.m3u8_relative_path = m3u8_path
+        playlist_export.report_relative_path = report_path
+        playlist_export.digest = digest
+        playlist_export.status = "published"
     else:
         raise RuntimeError(f"Unsupported job kind: {job.kind}")
 

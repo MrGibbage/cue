@@ -16,6 +16,8 @@ The detailed execution plan is [implementation-plan.md](implementation-plan.md).
   the deployed Cue instance.
 - 2026-08-06: Milestone 4 generic existing-library scan and approval import
   completed. Dedicated MVG catalog import remains deferred.
+- 2026-08-06: Milestone 5 deterministic M3U8 export previews, approval, and
+  missing-item reports completed. Notifications and backup/restore remain.
 
 ## 1. Product decisions and acceptance specification
 
@@ -94,6 +96,19 @@ web-request workflow for a library with roughly 10,000 or more files.
 - Implement deterministic M3U/M3U8 exports and unresolved-item reports.
 - Implement Plex read-only planning, scoped apply to registered Cue playlists,
   rollback manifests, and recovery reporting.
+
+### M3U8 delivery notes
+
+- Cue persists an immutable export manifest from the collection's latest
+  approved source snapshot. The manifest preserves resolved order and records
+  every omitted item with a reason.
+- An export is previewed before a separate explicit approval queues publication.
+  The worker atomically writes a UTF-8 `.m3u8` artifact and a JSON
+  missing-item report, then records a digest.
+- `CUE_M3U_PATH_PREFIX` is optional. When set, each playlist entry is prefixed
+  with the media-root path visible to the target player; otherwise entries are
+  relative to Cue's media root. This keeps player-specific path mappings out of
+  collection data.
 
 ## 8. Dashboard and operational polish
 
