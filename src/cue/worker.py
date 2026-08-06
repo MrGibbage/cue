@@ -93,6 +93,7 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
         )
         queued_downloads = 0
         batch_size = get_download_batch_size(session, settings.default_download_batch_size)
+        review_count = 0
         for entry in entries:
             recording = session.get(Recording, entry.recording_id)
             if recording is None:
@@ -109,6 +110,8 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                 session, recording, search_youtube(json.loads(recording.artists_json), recording.title)
             )
             resolution = decide_resolution(session, entry, candidates)
+            if resolution.status == "review":
+                review_count += 1
             if resolution.status == "auto_selected":
                 if queued_downloads < batch_size:
                     queue_candidate_download(session, owner=owner, resolution=resolution)
@@ -116,6 +119,14 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                 else:
                     resolution.status = "review"
                     resolution.candidate_asset_id = None
+                    review_count += 1
+        if review_count:
+            notify(
+                settings,
+                "Cue review needed",
+                f"{review_count} item(s) in source snapshot #{snapshot.id} need a video decision.",
+                "warning",
+            )
     elif job.kind == "download_candidate":
         candidate_id, resolution_id = payload.get("candidate_id"), payload.get("resolution_id")
         if not isinstance(candidate_id, int) or not isinstance(resolution_id, int):
