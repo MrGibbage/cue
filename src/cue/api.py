@@ -4,6 +4,7 @@ import json
 import logging
 import secrets
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import uvicorn
@@ -28,12 +29,26 @@ from cue.config import Settings, get_settings
 from cue.db import create_db_engine, database_ready, run_migrations
 from cue.discovery import parse_document
 from cue.logging import configure_logging
-from cue.models import ApiToken, AuditEvent, Collection, SourceRow, SourceSnapshot, User
+from cue.models import (
+    ApiToken,
+    AuditEvent,
+    CandidateAsset,
+    Collection,
+    CollectionEntry,
+    CollectionResolution,
+    CollectionVersion,
+    Job,
+    JobAttempt,
+    SourceRow,
+    SourceSnapshot,
+    User,
+)
 from cue.services import (
     approve_snapshot,
     bootstrap_admin,
     create_collection,
     create_json_preview,
+    queue_candidate_download,
     revoke_token,
     write_audit,
 )
@@ -59,6 +74,10 @@ class CollectionRequest(BaseModel):
 
 class JsonPreviewRequest(BaseModel):
     document: dict[str, Any] | list[Any]
+
+
+class CandidateSelectionRequest(BaseModel):
+    collection_entry_id: int
 
 
 def database_session(request: Request) -> Session:
@@ -270,6 +289,155 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rows = list(session.scalars(select(SourceRow).where(SourceRow.snapshot_id == snapshot.id)))
             return snapshot_summary(snapshot, rows)
 
+    @app.get("/api/v1/jobs")
+    def list_jobs(
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> list[dict[str, object]]:
+        require_scope(principal, "jobs:read")
+        with database_session(request) as session:
+            jobs = session.scalars(select(Job).where(Job.owner_id == principal.user.id).order_by(Job.id.desc()))
+            return [job_summary(session, job) for job in jobs]
+
+    @app.get("/api/v1/recordings/{recording_id}/candidates")
+    def list_candidates(
+        recording_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> list[dict[str, object]]:
+        require_scope(principal, "collections:read")
+        with database_session(request) as session:
+            can_access = session.scalar(
+                select(CollectionEntry.id)
+                .join(CollectionVersion, CollectionEntry.collection_version_id == CollectionVersion.id)
+                .join(Collection, CollectionVersion.collection_id == Collection.id)
+                .where(CollectionEntry.recording_id == recording_id, Collection.owner_id == principal.user.id)
+                .limit(1)
+            )
+            if can_access is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
+            candidates = session.scalars(
+                select(CandidateAsset)
+                .where(CandidateAsset.recording_id == recording_id)
+                .order_by(CandidateAsset.score.desc(), CandidateAsset.id)
+            )
+            return [
+                {
+                    "id": candidate.id,
+                    "title": candidate.title,
+                    "url": candidate.url,
+                    "uploader": candidate.uploader,
+                    "score": candidate.score,
+                    "classifications": json.loads(candidate.classifications_json),
+                    "reasons": json.loads(candidate.reasons_json),
+                    "status": candidate.status,
+                }
+                for candidate in candidates
+            ]
+
+    @app.get("/api/v1/collections/{collection_id}/resolutions")
+    def list_resolutions(
+        collection_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> list[dict[str, object]]:
+        require_scope(principal, "collections:read")
+        with database_session(request) as session:
+            collection = session.get(Collection, collection_id)
+            if collection is None or collection.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+            rows = session.execute(
+                select(CollectionResolution, CollectionEntry)
+                .join(CollectionEntry, CollectionResolution.collection_entry_id == CollectionEntry.id)
+                .join(CollectionVersion, CollectionVersion.id == CollectionEntry.collection_version_id)
+                .where(CollectionVersion.collection_id == collection.id)
+                .order_by(CollectionEntry.ordinal)
+            ).all()
+            return [
+                {
+                    "id": resolution.id,
+                    "collection_entry_id": entry.id,
+                    "recording_id": entry.recording_id,
+                    "status": resolution.status,
+                    "candidate_id": resolution.candidate_asset_id,
+                }
+                for resolution, entry in rows
+            ]
+
+    @app.post("/api/v1/candidates/{candidate_id}/selections", status_code=status.HTTP_201_CREATED)
+    def select_candidate(
+        candidate_id: int,
+        payload: CandidateSelectionRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        with database_session(request) as session:
+            candidate = session.get(CandidateAsset, candidate_id)
+            entry = session.get(CollectionEntry, payload.collection_entry_id)
+            if candidate is None or entry is None or candidate.recording_id != entry.recording_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Candidate or collection entry not found"
+                )
+            owned = session.scalar(
+                select(Collection.id)
+                .join(CollectionVersion, CollectionVersion.collection_id == Collection.id)
+                .where(CollectionVersion.id == entry.collection_version_id, Collection.owner_id == principal.user.id)
+            )
+            if owned is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Candidate or collection entry not found"
+                )
+            resolution = session.scalar(
+                select(CollectionResolution).where(CollectionResolution.collection_entry_id == entry.id)
+            )
+            if resolution is None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Candidate search has not completed")
+            resolution.candidate_asset_id = candidate.id
+            resolution.status = "selected"
+            resolution.selected_by_id = principal.user.id
+            resolution.selected_at = datetime.now(UTC).replace(tzinfo=None)
+            candidate.status = "selected"
+            job = queue_candidate_download(session, owner=principal.user, resolution=resolution)
+            write_audit(
+                session,
+                actor_id=principal.user.id,
+                action="candidate.selected",
+                entity_type="candidate_asset",
+                entity_id=candidate.id,
+                detail={"collection_entry_id": entry.id, "job_id": job.id},
+            )
+            session.commit()
+            return {"resolution_id": resolution.id, "status": resolution.status, "job_id": job.id}
+
+    @app.post("/api/v1/jobs/{job_id}/retries")
+    def retry_job(
+        job_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "jobs:write")
+        with database_session(request) as session:
+            job = session.get(Job, job_id)
+            if job is None or job.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+            if job.status != "failed":
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only failed jobs may be retried")
+            job.status = "queued"
+            job.claimed_at = None
+            job.claimed_by = None
+            write_audit(
+                session,
+                actor_id=principal.user.id,
+                action="job.retried",
+                entity_type="job",
+                entity_id=job.id,
+            )
+            session.commit()
+            return job_summary(session, job)
+
     @app.post("/api/v1/collections/{collection_id}/json-upload-previews", status_code=status.HTTP_201_CREATED)
     async def post_json_upload_preview(
         collection_id: int,
@@ -361,6 +529,23 @@ def snapshot_summary(snapshot: SourceSnapshot, rows: list[Any]) -> dict[str, obj
                 "error": row.error,
             }
             for row in rows
+        ],
+    }
+
+
+def job_summary(session: Session, job: Job) -> dict[str, object]:
+    attempts = list(
+        session.scalars(select(JobAttempt).where(JobAttempt.job_id == job.id).order_by(JobAttempt.attempt_number))
+    )
+    return {
+        "id": job.id,
+        "kind": job.kind,
+        "status": job.status,
+        "attempt_count": job.attempt_count,
+        "max_attempts": job.max_attempts,
+        "last_error": job.last_error,
+        "attempts": [
+            {"number": attempt.attempt_number, "status": attempt.status, "error": attempt.error} for attempt in attempts
         ],
     }
 

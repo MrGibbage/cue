@@ -10,8 +10,10 @@ from cue.auth import password_hash
 from cue.discovery import PreviewDocument
 from cue.models import (
     AuditEvent,
+    CandidateAsset,
     Collection,
     CollectionEntry,
+    CollectionResolution,
     CollectionVersion,
     Job,
     Recording,
@@ -21,6 +23,87 @@ from cue.models import (
     User,
     UserRole,
 )
+from cue.providers import ProviderCandidate
+from cue.scoring import score_candidate
+
+
+def store_youtube_candidates(
+    session: Session, recording: Recording, candidates: list[ProviderCandidate]
+) -> list[CandidateAsset]:
+    stored: list[CandidateAsset] = []
+    artists = json.loads(recording.artists_json)
+    for candidate in candidates:
+        score = score_candidate(artists, recording.title, candidate.title, candidate.uploader)
+        existing = session.scalar(
+            select(CandidateAsset).where(
+                CandidateAsset.provider == "youtube", CandidateAsset.provider_id == candidate.provider_id
+            )
+        )
+        if existing is None:
+            existing = CandidateAsset(
+                recording_id=recording.id,
+                provider="youtube",
+                provider_id=candidate.provider_id,
+                url=candidate.url,
+                title=candidate.title,
+                uploader=candidate.uploader,
+                duration_seconds=candidate.duration_seconds,
+                classifications_json=json.dumps(score.classifications),
+                score=score.score,
+                reasons_json=json.dumps(score.reasons),
+            )
+            session.add(existing)
+        stored.append(existing)
+    session.flush()
+    return stored
+
+
+def decide_resolution(
+    session: Session, entry: CollectionEntry, candidates: list[CandidateAsset]
+) -> CollectionResolution:
+    """Apply the strict default policy without downloading anything."""
+    resolution = session.scalar(
+        select(CollectionResolution).where(CollectionResolution.collection_entry_id == entry.id)
+    )
+    if resolution is None:
+        resolution = CollectionResolution(collection_entry_id=entry.id)
+        session.add(resolution)
+    clear = [
+        candidate for candidate in candidates if json.loads(candidate.classifications_json) == ["official_music_video"]
+    ]
+    if len(clear) == 1:
+        resolution.candidate_asset_id = clear[0].id
+        resolution.status = "auto_selected"
+        clear[0].status = "selected"
+    elif candidates:
+        resolution.candidate_asset_id = None
+        resolution.status = "review"
+    else:
+        resolution.candidate_asset_id = None
+        resolution.status = "unresolved"
+    session.flush()
+    return resolution
+
+
+def queue_candidate_download(session: Session, *, owner: User, resolution: CollectionResolution) -> Job:
+    if resolution.candidate_asset_id is None:
+        raise ValueError("A candidate must be selected before it can be downloaded")
+    payload = json.dumps(
+        {"candidate_id": resolution.candidate_asset_id, "resolution_id": resolution.id}, sort_keys=True
+    )
+    existing = session.scalar(
+        select(Job).where(
+            Job.kind == "download_candidate",
+            Job.status.in_(("queued", "running", "succeeded")),
+            Job.payload_json == payload,
+        )
+    )
+    if existing is not None:
+        return existing
+    job = Job(owner_id=owner.id, kind="download_candidate", payload_json=payload)
+    session.add(job)
+    session.flush()
+    return job
 
 
 def write_audit(

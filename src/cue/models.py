@@ -124,6 +124,53 @@ class CollectionEntry(Base):
     status: Mapped[str] = mapped_column(String(32), default="unresolved")
 
 
+class CandidateAsset(Base):
+    __tablename__ = "candidate_assets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    recording_id: Mapped[int] = mapped_column(ForeignKey("recordings.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    provider_id: Mapped[str] = mapped_column(String(255))
+    url: Mapped[str] = mapped_column(String(2048))
+    title: Mapped[str] = mapped_column(String(1024))
+    uploader: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    classifications_json: Mapped[str] = mapped_column(Text, default="[]")
+    score: Mapped[int] = mapped_column(Integer)
+    reasons_json: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(32), default="candidate")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CollectionResolution(Base):
+    __tablename__ = "collection_resolutions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    collection_entry_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_entries.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    candidate_asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("candidate_assets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="unresolved", index=True)
+    selected_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    selected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PublishedAsset(Base):
+    __tablename__ = "published_assets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    candidate_asset_id: Mapped[int] = mapped_column(
+        ForeignKey("candidate_assets.id", ondelete="RESTRICT"), unique=True, index=True
+    )
+    relative_path: Mapped[str] = mapped_column(String(2048), unique=True)
+    container: Mapped[str] = mapped_column(String(16))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
