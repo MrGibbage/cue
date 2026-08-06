@@ -23,8 +23,9 @@ inspectable, safe music-video library rather than behavioral replacement of MVG.
 The implemented core supports JSON source previews/approval, strict
 YouTube-based video acquisition with candidate review, generic existing-library
 scan/import, and approved deterministic M3U8 exports with missing-item
-reports. Dashboard flows, notifications, native source adapters, and the
-optional MVG importer remain ahead on the roadmap.
+reports. A server-rendered dashboard provides those workflows without requiring
+manual API calls. Notifications, native source adapters, and the optional MVG
+importer remain ahead on the roadmap.
 
 Read [the product design](docs/product-design.md), [MVP plan](docs/mvp.md),
 [migration plan](docs/migration-from-mvg.md), [technical design](docs/technical-design.md),

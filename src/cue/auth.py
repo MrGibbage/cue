@@ -60,7 +60,7 @@ def authenticate(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
 
-def require_csrf(
+async def require_csrf(
     request: Request,
     csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
     principal: Principal = Depends(authenticate),
@@ -68,7 +68,12 @@ def require_csrf(
     if principal.token_scopes is not None:
         return principal
     expected = request.session.get("csrf_token")
-    if not expected or not csrf_token or not secrets.compare_digest(expected, csrf_token):
+    form_token = None
+    if csrf_token is None:
+        form = await request.form()
+        form_token = form.get("csrf_token")
+    token = csrf_token or form_token
+    if not expected or not isinstance(token, str) or not secrets.compare_digest(expected, token):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token required")
     return principal
 
