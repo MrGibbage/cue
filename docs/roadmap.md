@@ -69,6 +69,26 @@ The detailed execution plan is [implementation-plan.md](implementation-plan.md).
 - Add the MVG importer with provenance and safeguards against re-queueing
   already published assets.
 
+### Large-library hardening (required follow-up)
+
+The initial generic importer is deliberately conservative and read-only, but
+its preview scan is synchronous: it walks the configured media root, stores all
+preview rows in one transaction, and returns all rows in one API response. It
+is suitable for a normally sized personal library, but is not yet a reliable
+web-request workflow for a library with roughly 10,000 or more files.
+
+- There is no intended library-size cap: a flat directory with 10,000 videos is
+  acceptable to the filesystem and SQLite.
+- The concern is HTTP request duration, memory use, response size, and reverse
+  proxy/client timeouts, not file safety or SQLite row capacity.
+- Before presenting large-library import as production-hardened, move scans to
+  durable background jobs with progress, cancellation, and bounded write
+  batches.
+- Paginate import-preview rows and library search; APIs must return counts and
+  a page of rows rather than an unbounded full-library response.
+- Expose directory-level progress and configurable safety limits so an operator
+  can understand and control a long scan.
+
 ## 7. Publishers
 
 - Implement deterministic M3U/M3U8 exports and unresolved-item reports.
