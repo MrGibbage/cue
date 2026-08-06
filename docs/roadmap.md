@@ -135,6 +135,8 @@ web-request workflow for a library with roughly 10,000 or more files.
   `PRAGMA integrity_check`, and retains the configured 30-day window by
   default. `cue-admin restore` requires a new explicit destination and never
   overwrites an existing database.
+- Notifications use the configured self-hosted Apprise endpoint on terminal job
+  failures. Delivery is best-effort and never changes a Cue job outcome.
 
 ## 9. Verification and MVG cutover
 
