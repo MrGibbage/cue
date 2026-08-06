@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cue.auth import password_hash
 from cue.discovery import PreviewDocument
+from cue.library import scan_library
 from cue.models import (
     AuditEvent,
     CandidateAsset,
@@ -16,6 +18,9 @@ from cue.models import (
     CollectionResolution,
     CollectionVersion,
     Job,
+    LibraryImport,
+    LibraryImportRow,
+    PublishedAsset,
     Recording,
     Role,
     SourceRow,
@@ -301,3 +306,112 @@ def approve_snapshot(session: Session, snapshot: SourceSnapshot, owner: User) ->
         detail={"accepted_rows": len(rows), "job_id": job.id},
     )
     return job
+
+
+def create_library_import_preview(
+    session: Session, *, owner: User, media_root: Path, source_name: str | None = None
+) -> LibraryImport:
+    """Build a read-only, conservative import preview for the configured media root."""
+    library_import = LibraryImport(owner_id=owner.id, source_name=source_name.strip() if source_name else None)
+    session.add(library_import)
+    session.flush()
+    managed_paths = set(session.scalars(select(PublishedAsset.relative_path)))
+    seen_keys: set[str] = set()
+    root = media_root.resolve()
+    for path, parsed in scan_library(root):
+        relative_path = path.relative_to(root).as_posix()
+        status = "accepted"
+        error = parsed.error
+        if relative_path in managed_paths:
+            status = "already_imported"
+            error = "This path is already managed by Cue"
+        elif error:
+            status = "review"
+        elif parsed.canonical_key in seen_keys:
+            status = "review"
+            error = "Another file in this preview has the same parsed recording; review alternate versions manually"
+        else:
+            seen_keys.add(parsed.canonical_key or "")
+        session.add(
+            LibraryImportRow(
+                library_import_id=library_import.id,
+                relative_path=relative_path,
+                byte_size=path.stat().st_size,
+                container=path.suffix.removeprefix(".").lower(),
+                artists_json=json.dumps(parsed.artists) if parsed.artists else None,
+                title=parsed.title,
+                descriptor=parsed.descriptor,
+                year=parsed.year,
+                canonical_key=parsed.canonical_key,
+                status=status,
+                error=error,
+            )
+        )
+    write_audit(
+        session,
+        actor_id=owner.id,
+        action="library_import.previewed",
+        entity_type="library_import",
+        entity_id=library_import.id,
+        detail={"source_name": library_import.source_name},
+    )
+    return library_import
+
+
+def approve_library_import(session: Session, library_import: LibraryImport, owner: User, media_root: Path) -> int:
+    if library_import.status != "previewed":
+        raise ValueError("Library import has already been approved")
+    root = media_root.resolve()
+    rows = list(
+        session.scalars(
+            select(LibraryImportRow)
+            .where(LibraryImportRow.library_import_id == library_import.id, LibraryImportRow.status == "accepted")
+            .order_by(LibraryImportRow.id)
+        )
+    )
+    imported = 0
+    for row in rows:
+        path = (root / row.relative_path).resolve()
+        if root not in path.parents or not path.is_file():
+            row.status = "review"
+            row.error = "File no longer exists beneath the configured media root"
+            continue
+        if path.stat().st_size != row.byte_size:
+            row.status = "review"
+            row.error = "File changed after preview; create a new preview before importing"
+            continue
+        if session.scalar(select(PublishedAsset).where(PublishedAsset.relative_path == row.relative_path)):
+            row.status = "already_imported"
+            row.error = "This path is already managed by Cue"
+            continue
+        recording = session.scalar(select(Recording).where(Recording.canonical_key == row.canonical_key))
+        if recording is None:
+            recording = Recording(
+                artists_json=row.artists_json or "[]", title=row.title or "", canonical_key=row.canonical_key or ""
+            )
+            session.add(recording)
+            session.flush()
+        asset = PublishedAsset(
+            recording_id=recording.id,
+            relative_path=row.relative_path,
+            container=row.container,
+            byte_size=row.byte_size,
+        )
+        session.add(asset)
+        session.flush()
+        row.published_asset_id = asset.id
+        row.status = "imported"
+        row.error = None
+        imported += 1
+    library_import.status = "approved"
+    library_import.approved_at = datetime.now(UTC).replace(tzinfo=None)
+    library_import.approved_by_id = owner.id
+    write_audit(
+        session,
+        actor_id=owner.id,
+        action="library_import.approved",
+        entity_type="library_import",
+        entity_id=library_import.id,
+        detail={"imported_rows": imported},
+    )
+    return imported

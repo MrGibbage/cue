@@ -47,6 +47,7 @@ def download_candidate(session: Session, candidate_id: int, resolution_id: int, 
     session.add(
         PublishedAsset(
             candidate_asset_id=candidate.id,
+            recording_id=recording.id,
             relative_path=str(destination.relative_to(settings.media_root)),
             container=destination.suffix.removeprefix(".").lower(),
             byte_size=destination.stat().st_size,
@@ -84,6 +85,14 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
             recording = session.get(Recording, entry.recording_id)
             if recording is None:
                 raise RuntimeError(f"Recording {entry.recording_id} not found")
+            existing_asset = session.scalar(
+                select(PublishedAsset).where(PublishedAsset.recording_id == recording.id).limit(1)
+            )
+            if existing_asset is not None:
+                resolution = decide_resolution(session, entry, [])
+                resolution.status = "published"
+                entry.status = "resolved"
+                continue
             candidates = store_youtube_candidates(
                 session, recording, search_youtube(json.loads(recording.artists_json), recording.title)
             )
