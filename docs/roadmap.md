@@ -19,6 +19,8 @@ The detailed execution plan is [implementation-plan.md](implementation-plan.md).
 - 2026-08-06: Milestone 5 deterministic M3U8 export previews, approval, and
   missing-item reports completed. Notifications and backup/restore remain.
 - 2026-08-06: Milestone 6 server-rendered dashboard and settings completed.
+- 2026-08-06: Milestone 7 operational reliability completed: verified daily
+  backups, Apprise alerts, job recovery, and diagnostics.
 
 ## 1. Product decisions and acceptance specification
 
