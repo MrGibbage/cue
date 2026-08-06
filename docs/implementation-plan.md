@@ -9,7 +9,10 @@ This plan implements the agreed roadmap and [MVP acceptance exercise](mvp-accept
 - **Milestone 1 — Control plane:** complete and verified on the deployed Cue
   instance: administrator bootstrap/login, CSRF-protected collection creation,
   and collection retrieval work through `cue.pelorus.org`.
-- **Milestone 2 — JSON discovery:** next.
+- **Milestone 2 — JSON discovery:** complete and verified on the deployed Cue
+  instance: pasted JSON preview, immutable snapshot inspection, and explicit
+  approval all succeeded.
+- **Milestone 3 — Acquisition:** next.
 
 ## Delivery milestones
 

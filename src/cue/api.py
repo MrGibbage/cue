@@ -4,10 +4,10 @@ import json
 import logging
 import secrets
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Any
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -26,9 +26,17 @@ from cue.auth import (
 )
 from cue.config import Settings, get_settings
 from cue.db import create_db_engine, database_ready, run_migrations
+from cue.discovery import parse_document
 from cue.logging import configure_logging
-from cue.models import ApiToken, AuditEvent, Collection, User
-from cue.services import bootstrap_admin, create_collection, revoke_token, write_audit
+from cue.models import ApiToken, AuditEvent, Collection, SourceRow, SourceSnapshot, User
+from cue.services import (
+    approve_snapshot,
+    bootstrap_admin,
+    create_collection,
+    create_json_preview,
+    revoke_token,
+    write_audit,
+)
 
 logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="src/cue/templates")
@@ -47,6 +55,10 @@ class TokenRequest(BaseModel):
 class CollectionRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     recipe: dict[str, object] = Field(default_factory=dict)
+
+
+class JsonPreviewRequest(BaseModel):
+    document: dict[str, Any] | list[Any]
 
 
 def database_session(request: Request) -> Session:
@@ -217,6 +229,96 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             return [{"id": item.id, "name": item.name} for item in collections]
 
+    @app.post("/api/v1/collections/{collection_id}/json-previews", status_code=status.HTTP_201_CREATED)
+    def post_json_preview(
+        collection_id: int,
+        payload: JsonPreviewRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        try:
+            preview = parse_document(payload.document)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        with database_session(request) as session:
+            collection = session.get(Collection, collection_id)
+            if collection is None or collection.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+            snapshot = create_json_preview(
+                session,
+                collection=collection,
+                owner=principal.user,
+                document=payload.document,
+                preview=preview,
+            )
+            session.commit()
+            return snapshot_summary(snapshot, preview.rows)
+
+    @app.get("/api/v1/source-snapshots/{snapshot_id}")
+    def get_snapshot(
+        snapshot_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> dict[str, object]:
+        require_scope(principal, "collections:read")
+        with database_session(request) as session:
+            snapshot = session.get(SourceSnapshot, snapshot_id)
+            if snapshot is None or session.get(Collection, snapshot.collection_id).owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source snapshot not found")
+            rows = list(session.scalars(select(SourceRow).where(SourceRow.snapshot_id == snapshot.id)))
+            return snapshot_summary(snapshot, rows)
+
+    @app.post("/api/v1/collections/{collection_id}/json-upload-previews", status_code=status.HTTP_201_CREATED)
+    async def post_json_upload_preview(
+        collection_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+        file: UploadFile = File(...),
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        if not file.filename or not file.filename.lower().endswith(".json"):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Upload a .json file")
+        try:
+            document = json.loads((await file.read()).decode("utf-8"))
+            preview = parse_document(document)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        with database_session(request) as session:
+            collection = session.get(Collection, collection_id)
+            if collection is None or collection.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+            snapshot = create_json_preview(
+                session,
+                collection=collection,
+                owner=principal.user,
+                document=document,
+                preview=preview,
+            )
+            session.commit()
+            return snapshot_summary(snapshot, preview.rows)
+
+    @app.post("/api/v1/source-snapshots/{snapshot_id}/approvals", status_code=status.HTTP_201_CREATED)
+    def post_snapshot_approval(
+        snapshot_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        with database_session(request) as session:
+            snapshot = session.get(SourceSnapshot, snapshot_id)
+            if snapshot is None or session.get(Collection, snapshot.collection_id).owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source snapshot not found")
+            try:
+                job = approve_snapshot(session, snapshot, principal.user)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            session.commit()
+            return {"snapshot_id": snapshot.id, "status": snapshot.status, "job_id": job.id}
+
     @app.get("/api/v1/audit-events")
     def list_audit_events(
         request: Request,
@@ -239,6 +341,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ]
 
     return app
+
+
+def snapshot_summary(snapshot: SourceSnapshot, rows: list[Any]) -> dict[str, object]:
+    return {
+        "id": snapshot.id,
+        "collection_id": snapshot.collection_id,
+        "status": snapshot.status,
+        "source": snapshot.source_name,
+        "source_url": snapshot.source_url,
+        "counts": {state: sum(row.status == state for row in rows) for state in ("accepted", "duplicate", "rejected")},
+        "rows": [
+            {
+                "position": row.position if hasattr(row, "position") else row.source_position,
+                "rank": row.supplied_rank,
+                "artists": row.artists if hasattr(row, "artists") else json.loads(row.artists_json or "[]"),
+                "title": row.title,
+                "status": row.status,
+                "error": row.error,
+            }
+            for row in rows
+        ],
+    }
 
 
 def main() -> None:

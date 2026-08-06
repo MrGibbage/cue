@@ -67,6 +67,63 @@ class CollectionVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class SourceSnapshot(Base):
+    __tablename__ = "source_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    collection_id: Mapped[int] = mapped_column(ForeignKey("collections.id", ondelete="CASCADE"), index=True)
+    collection_version_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_versions.id", ondelete="RESTRICT"), index=True
+    )
+    adapter: Mapped[str] = mapped_column(String(64))
+    source_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    raw_document_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="previewed", index=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SourceRow(Base):
+    __tablename__ = "source_rows"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("source_snapshots.id", ondelete="CASCADE"), index=True)
+    source_position: Mapped[int] = mapped_column(Integer)
+    supplied_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    artists_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    canonical_key: Mapped[str | None] = mapped_column(String(2048), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_json: Mapped[str] = mapped_column(Text)
+
+
+class Recording(Base):
+    __tablename__ = "recordings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artists_json: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(String(1024))
+    canonical_key: Mapped[str] = mapped_column(String(2048), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CollectionEntry(Base):
+    __tablename__ = "collection_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    collection_version_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_versions.id", ondelete="CASCADE"), index=True
+    )
+    recording_id: Mapped[int] = mapped_column(ForeignKey("recordings.id", ondelete="RESTRICT"), index=True)
+    source_row_id: Mapped[int] = mapped_column(ForeignKey("source_rows.id", ondelete="RESTRICT"), unique=True)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="unresolved")
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
@@ -75,7 +132,24 @@ class Job(Base):
     kind: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class JobAttempt(Base):
+    __tablename__ = "job_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32))
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AuditEvent(Base):
