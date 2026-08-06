@@ -5,11 +5,12 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 import uvicorn
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -41,17 +42,20 @@ from cue.models import (
     JobAttempt,
     LibraryImport,
     LibraryImportRow,
+    PlaylistExport,
     SourceRow,
     SourceSnapshot,
     User,
 )
 from cue.services import (
     approve_library_import,
+    approve_playlist_export,
     approve_snapshot,
     bootstrap_admin,
     create_collection,
     create_json_preview,
     create_library_import_preview,
+    create_playlist_export_preview,
     queue_candidate_download,
     revoke_token,
     write_audit,
@@ -86,6 +90,10 @@ class CandidateSelectionRequest(BaseModel):
 
 class LibraryImportPreviewRequest(BaseModel):
     source_name: str | None = Field(default=None, max_length=255)
+
+
+class PlaylistExportPreviewRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 def database_session(request: Request) -> Session:
@@ -377,6 +385,87 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 }
                 for asset, recording in rows
             ]
+
+    @app.post("/api/v1/collections/{collection_id}/playlist-export-previews", status_code=status.HTTP_201_CREATED)
+    def post_playlist_export_preview(
+        collection_id: int,
+        payload: PlaylistExportPreviewRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        with database_session(request) as session:
+            collection = session.get(Collection, collection_id)
+            if collection is None or collection.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+            try:
+                playlist_export = create_playlist_export_preview(
+                    session,
+                    collection=collection,
+                    owner=principal.user,
+                    name=payload.name,
+                    media_root=request.app.state.settings.media_root,
+                    m3u_path_prefix=request.app.state.settings.m3u_path_prefix,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            session.commit()
+            return playlist_export_summary(playlist_export)
+
+    @app.get("/api/v1/playlist-exports/{playlist_export_id}")
+    def get_playlist_export(
+        playlist_export_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> dict[str, object]:
+        require_scope(principal, "collections:read")
+        with database_session(request) as session:
+            playlist_export = _owned_playlist_export(session, playlist_export_id, principal.user.id)
+            return playlist_export_summary(playlist_export)
+
+    @app.post("/api/v1/playlist-exports/{playlist_export_id}/approvals", status_code=status.HTTP_201_CREATED)
+    def post_playlist_export_approval(
+        playlist_export_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        with database_session(request) as session:
+            playlist_export = _owned_playlist_export(session, playlist_export_id, principal.user.id)
+            try:
+                job = approve_playlist_export(session, playlist_export, principal.user)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            session.commit()
+            return {"playlist_export_id": playlist_export.id, "status": playlist_export.status, "job_id": job.id}
+
+    @app.get("/api/v1/playlist-exports/{playlist_export_id}/m3u8")
+    def download_playlist_m3u8(
+        playlist_export_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> FileResponse:
+        require_scope(principal, "collections:read")
+        with database_session(request) as session:
+            playlist_export = _owned_playlist_export(session, playlist_export_id, principal.user.id)
+            path = _export_artifact_path(request.app.state.settings.export_root, playlist_export.m3u8_relative_path)
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="M3U8 export is not published")
+        return FileResponse(path, media_type="application/x-mpegurl", filename=path.name)
+
+    @app.get("/api/v1/playlist-exports/{playlist_export_id}/missing-report")
+    def get_missing_report(
+        playlist_export_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> dict[str, object]:
+        require_scope(principal, "collections:read")
+        with database_session(request) as session:
+            playlist_export = _owned_playlist_export(session, playlist_export_id, principal.user.id)
+            manifest = json.loads(playlist_export.manifest_json)
+            return {"missing": manifest["missing"]}
 
     @app.post("/api/v1/library-imports/{library_import_id}/approvals")
     def post_library_import_approval(
@@ -673,6 +762,33 @@ def library_import_summary(library_import: LibraryImport, rows: list[LibraryImpo
             for row in rows
         ],
     }
+
+
+def playlist_export_summary(playlist_export: PlaylistExport) -> dict[str, object]:
+    manifest = json.loads(playlist_export.manifest_json)
+    return {
+        "id": playlist_export.id,
+        "collection_id": playlist_export.collection_id,
+        "name": playlist_export.name,
+        "status": playlist_export.status,
+        "resolved_count": len(manifest["resolved"]),
+        "missing_count": len(manifest["missing"]),
+        "manifest": manifest,
+        "digest": playlist_export.digest,
+    }
+
+
+def _owned_playlist_export(session: Session, playlist_export_id: int, owner_id: int) -> PlaylistExport:
+    playlist_export = session.get(PlaylistExport, playlist_export_id)
+    if playlist_export is None or playlist_export.owner_id != owner_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Playlist export not found")
+    return playlist_export
+
+
+def _export_artifact_path(export_root: Path, name: str | None) -> Path | None:
+    if not name or Path(name).name != name:
+        return None
+    return export_root / name
 
 
 def main() -> None:
