@@ -407,6 +407,26 @@ def jobs_page(request: Request) -> HTMLResponse:
         return render(request, "jobs.html", title="Jobs", user=user, jobs=jobs)
 
 
+@router.get("/diagnostics", response_class=HTMLResponse)
+def diagnostics_page(request: Request) -> HTMLResponse:
+    from cue.models import Job
+
+    with Session(request.app.state.engine) as session:
+        user = current_user(request, session)
+        if user is None:
+            return redirect("/login")
+        backup_files = sorted(request.app.state.settings.backup_root.glob("cue-????-??-??.sqlite3"))
+        return render(
+            request,
+            "diagnostics.html",
+            title="Diagnostics",
+            user=user,
+            latest_backup=backup_files[-1].name if backup_files else None,
+            failed=len(list(session.scalars(select(Job.id).where(Job.owner_id == user.id, Job.status == "failed")))),
+            queued=len(list(session.scalars(select(Job.id).where(Job.owner_id == user.id, Job.status == "queued")))),
+        )
+
+
 @router.post("/jobs/{job_id}/retry")
 def retry_job_form(job_id: int, request: Request, _: Annotated[Principal, Depends(require_csrf)]) -> RedirectResponse:
     from cue.models import Job
