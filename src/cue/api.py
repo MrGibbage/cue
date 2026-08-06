@@ -39,15 +39,19 @@ from cue.models import (
     CollectionVersion,
     Job,
     JobAttempt,
+    LibraryImport,
+    LibraryImportRow,
     SourceRow,
     SourceSnapshot,
     User,
 )
 from cue.services import (
+    approve_library_import,
     approve_snapshot,
     bootstrap_admin,
     create_collection,
     create_json_preview,
+    create_library_import_preview,
     queue_candidate_download,
     revoke_token,
     write_audit,
@@ -78,6 +82,10 @@ class JsonPreviewRequest(BaseModel):
 
 class CandidateSelectionRequest(BaseModel):
     collection_entry_id: int
+
+
+class LibraryImportPreviewRequest(BaseModel):
+    source_name: str | None = Field(default=None, max_length=255)
 
 
 def database_session(request: Request) -> Session:
@@ -298,6 +306,98 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with database_session(request) as session:
             jobs = session.scalars(select(Job).where(Job.owner_id == principal.user.id).order_by(Job.id.desc()))
             return [job_summary(session, job) for job in jobs]
+
+    @app.post("/api/v1/library-imports/previews", status_code=status.HTTP_201_CREATED)
+    def post_library_import_preview(
+        payload: LibraryImportPreviewRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        with database_session(request) as session:
+            library_import = create_library_import_preview(
+                session,
+                owner=principal.user,
+                media_root=request.app.state.settings.media_root,
+                source_name=payload.source_name,
+            )
+            session.commit()
+            rows = list(
+                session.scalars(
+                    select(LibraryImportRow).where(LibraryImportRow.library_import_id == library_import.id)
+                )
+            )
+            return library_import_summary(library_import, rows)
+
+    @app.get("/api/v1/library-imports/{library_import_id}")
+    def get_library_import(
+        library_import_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> dict[str, object]:
+        require_scope(principal, "collections:read")
+        with database_session(request) as session:
+            library_import = session.get(LibraryImport, library_import_id)
+            if library_import is None or library_import.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Library import not found")
+            rows = list(
+                session.scalars(
+                    select(LibraryImportRow)
+                    .where(LibraryImportRow.library_import_id == library_import.id)
+                    .order_by(LibraryImportRow.id)
+                )
+            )
+            return library_import_summary(library_import, rows)
+
+    @app.get("/api/v1/library/assets")
+    def list_library_assets(
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> list[dict[str, object]]:
+        require_scope(principal, "collections:read")
+        from cue.models import PublishedAsset, Recording
+
+        with database_session(request) as session:
+            rows = session.execute(
+                select(PublishedAsset, Recording)
+                .join(Recording, PublishedAsset.recording_id == Recording.id)
+                .order_by(PublishedAsset.relative_path)
+            ).all()
+            return [
+                {
+                    "id": asset.id,
+                    "recording_id": recording.id,
+                    "artists": json.loads(recording.artists_json),
+                    "title": recording.title,
+                    "relative_path": asset.relative_path,
+                    "container": asset.container,
+                    "byte_size": asset.byte_size,
+                    "source": "download" if asset.candidate_asset_id else "library_import",
+                }
+                for asset, recording in rows
+            ]
+
+    @app.post("/api/v1/library-imports/{library_import_id}/approvals")
+    def post_library_import_approval(
+        library_import_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        with database_session(request) as session:
+            library_import = session.get(LibraryImport, library_import_id)
+            if library_import is None or library_import.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Library import not found")
+            try:
+                imported = approve_library_import(
+                    session, library_import, principal.user, request.app.state.settings.media_root
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            session.commit()
+            return {"library_import_id": library_import.id, "status": library_import.status, "imported": imported}
 
     @app.get("/api/v1/recordings/{recording_id}/candidates")
     def list_candidates(
@@ -546,6 +646,31 @@ def job_summary(session: Session, job: Job) -> dict[str, object]:
         "last_error": job.last_error,
         "attempts": [
             {"number": attempt.attempt_number, "status": attempt.status, "error": attempt.error} for attempt in attempts
+        ],
+    }
+
+
+def library_import_summary(library_import: LibraryImport, rows: list[LibraryImportRow]) -> dict[str, object]:
+    states = ("accepted", "already_imported", "review", "imported")
+    return {
+        "id": library_import.id,
+        "source_name": library_import.source_name,
+        "status": library_import.status,
+        "counts": {state: sum(row.status == state for row in rows) for state in states},
+        "rows": [
+            {
+                "relative_path": row.relative_path,
+                "byte_size": row.byte_size,
+                "container": row.container,
+                "artists": json.loads(row.artists_json) if row.artists_json else None,
+                "title": row.title,
+                "descriptor": row.descriptor,
+                "year": row.year,
+                "status": row.status,
+                "error": row.error,
+                "published_asset_id": row.published_asset_id,
+            }
+            for row in rows
         ],
     }
 

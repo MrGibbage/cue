@@ -4,9 +4,8 @@ Cue is a personal music-video library builder. It turns curated rules and
 external music data into a durable, inspectable local video library, with
 optional Plex playlists and VLC-compatible M3U exports.
 
-It is designed to replace the Alt Nation-specific workflow of Music Video
-Grabber once it has proven the same capture, acquisition, and publishing
-safeguards.
+It can import useful history from Music Video Grabber (MVG), but its goal is an
+inspectable, safe music-video library rather than behavioral replacement of MVG.
 
 ## Product principles
 
@@ -21,11 +20,10 @@ safeguards.
 
 ## Initial scope
 
-The MVP supports CSV/JSON uploads, SiriusXM recent-play discovery through
-xmplaylist, and a Billboard adapter only if its data source proves viable. It
-includes durable acquisition, library import, Plex/M3U publishing, and a
-single-owner dashboard. LLM-assisted planning and candidate review are planned
-immediately after the MVP, not inside it.
+The implemented core supports JSON source previews/approval, strict
+YouTube-based video acquisition with candidate review, and a generic existing
+library scan/import. M3U publishing, dashboard flows, notifications, native
+source adapters, and the optional MVG importer remain ahead on the roadmap.
 
 Read [the product design](docs/product-design.md), [MVP plan](docs/mvp.md),
 [migration plan](docs/migration-from-mvg.md), [technical design](docs/technical-design.md),

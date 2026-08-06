@@ -12,6 +12,10 @@ The detailed execution plan is [implementation-plan.md](implementation-plan.md).
   deployed Cue instance.
 - 2026-08-06: Milestone 2 JSON discovery completed and verified through the
   deployed Cue instance.
+- 2026-08-06: Milestone 3 safe video acquisition completed and verified through
+  the deployed Cue instance.
+- 2026-08-06: Milestone 4 generic existing-library scan and approval import
+  completed. Dedicated MVG catalog import remains deferred.
 
 ## 1. Product decisions and acceptance specification
 
