@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:////data/cue.sqlite3"
     media_root: Path = Path("/media")
     export_root: Path = Path("/data/exports")
+    backup_root: Path = Path("/data/backups")
+    backup_retention_days: int = Field(default=30, ge=1)
     m3u_path_prefix: str | None = None
     staging_root: Path | None = None
     download_workspace: Path | None = None

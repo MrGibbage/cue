@@ -11,6 +11,7 @@ from threading import Event
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from cue.backups import create_daily_backup
 from cue.config import Settings, get_settings
 from cue.db import create_db_engine, run_migrations
 from cue.library import publish_atomically, safe_filename
@@ -148,6 +149,10 @@ def main() -> None:
     worker_id = socket.gethostname()
     logger.info("Cue worker started")
     while not stop.is_set():
+        try:
+            create_daily_backup(settings)
+        except Exception:
+            logger.exception("Daily SQLite backup failed")
         with Session(engine) as session:
             job = claim_next_job(session, worker_id)
             if job is None:

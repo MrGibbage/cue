@@ -65,3 +65,16 @@ The initial control-plane API is available at `/docs`. Sign in through
 for session-authenticated mutations. You can then create a collection draft,
 create/revoke a scoped API token, and inspect your audit events through the
 `/api/v1` endpoints.
+
+## Backups and restore
+
+The worker creates an integrity-checked SQLite online backup each UTC day in
+`/srv/cue/data/backups` by default and retains 30 days. Run a manual backup with
+`docker compose exec cue-worker cue-admin backup`. To restore for inspection,
+use a new explicit destination (Cue refuses to overwrite one):
+
+```sh
+docker compose exec cue-worker cue-admin restore \
+  --source /data/backups/cue-YYYY-MM-DD.sqlite3 \
+  --destination /data/restored-cue.sqlite3
+```

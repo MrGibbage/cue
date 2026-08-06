@@ -129,6 +129,13 @@ web-request workflow for a library with roughly 10,000 or more files.
 - Environment-owned settings such as `CUE_M3U_PATH_PREFIX` remain deploy-time
   configuration because they describe how a particular player mounts media.
 
+### Operational delivery notes
+
+- The worker creates a SQLite online backup once per UTC day, verifies it with
+  `PRAGMA integrity_check`, and retains the configured 30-day window by
+  default. `cue-admin restore` requires a new explicit destination and never
+  overwrites an existing database.
+
 ## 9. Verification and MVG cutover
 
 - Run fixture-based unit/integration tests and a real staging-library trial.
