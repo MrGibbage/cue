@@ -33,6 +33,20 @@ Messy filenames intentionally remain review-needed rather than guessed. They
 can be normalized outside Cue and scanned again, or handled by later CSV/manual
 mapping work.
 
+### Large libraries
+
+Cue has no intended maximum number of managed videos, and a single flat
+directory with 10,000 videos is a valid library layout. The initial importer
+does not yet make that scale a reliable browser request, however: it currently
+scans synchronously, persists the full preview in one transaction, and returns
+all preview rows together. The scan remains read-only until approval, but a
+large request may be slow or hit a proxy/client timeout.
+
+Large-library hardening will move scanning into durable background jobs with
+progress and cancellation, use bounded database writes, and paginate both
+preview and library-search results. Until that work lands, import a very large
+library in smaller directory-scoped passes or use a staging/test subset first.
+
 ## Music Video Grabber import
 
 Cue should provide a dedicated MVG importer. It reads MVG's SQLite catalog and
