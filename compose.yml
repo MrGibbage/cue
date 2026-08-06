@@ -1,0 +1,32 @@
+services:
+  cue-api:
+    build: .
+    command: cue-api
+    env_file:
+      - ${CUE_ENV_FILE:-/etc/homelab/cue.env}
+    environment:
+      CUE_DATABASE_URL: ${CUE_DATABASE_URL:-sqlite:////data/cue.sqlite3}
+      CUE_MEDIA_ROOT: /media
+    user: "${CUE_PUID:-1000}:${CUE_PGID:-1000}"
+    volumes:
+      - ./data:/data
+      - ${CUE_MEDIA_DIR:?Set CUE_MEDIA_DIR}:/media:ro
+      - ${CUE_COOKIES_FILE:-/dev/null}:/run/secrets/youtube-cookies:ro
+    ports:
+      - "${CUE_PORT:-8080}:8080"
+    restart: unless-stopped
+  cue-worker:
+    build: .
+    command: cue-worker
+    env_file:
+      - ${CUE_ENV_FILE:-/etc/homelab/cue.env}
+    environment:
+      CUE_DATABASE_URL: ${CUE_DATABASE_URL:-sqlite:////data/cue.sqlite3}
+      CUE_MEDIA_ROOT: /media
+      CUE_STAGING_ROOT: /media/.cue-staging
+    user: "${CUE_PUID:-1000}:${CUE_PGID:-1000}"
+    volumes:
+      - ./data:/data
+      - ${CUE_MEDIA_DIR:?Set CUE_MEDIA_DIR}:/media:rw
+      - ${CUE_COOKIES_FILE:-/dev/null}:/run/secrets/youtube-cookies:ro
+    restart: unless-stopped
