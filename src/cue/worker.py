@@ -25,6 +25,7 @@ from cue.models import (
     Recording,
     SourceSnapshot,
 )
+from cue.notifications import notify
 from cue.providers import download_youtube, search_youtube, validate_video
 from cue.publishers import write_export_artifacts
 from cue.queue import claim_next_job, finish_job
@@ -166,6 +167,13 @@ def main() -> None:
                     logger.exception("Job %s failed", job.id)
                     finish_job(session, job, error=str(exc))
                     session.commit()
+                    if job.status == "failed":
+                        notify(
+                            settings,
+                            "Cue job failed",
+                            f"Job #{job.id} ({job.kind}) failed: {job.last_error}",
+                            "failure",
+                        )
         stop.wait(2)
     engine.dispose()
     logger.info("Cue worker stopped")
