@@ -11,6 +11,7 @@ from cue.auth import password_hash
 from cue.discovery import PreviewDocument
 from cue.library import scan_library
 from cue.models import (
+    ApplicationSetting,
     AuditEvent,
     CandidateAsset,
     Collection,
@@ -520,3 +521,33 @@ def _missing_export_item(
 
 def _playlist_path(relative_path: str, prefix: str | None) -> str:
     return f"{prefix.rstrip('/')}/{relative_path}" if prefix else relative_path
+
+
+def get_download_batch_size(session: Session, default: int) -> int:
+    setting = session.get(ApplicationSetting, "default_download_batch_size")
+    if setting is None:
+        return default
+    try:
+        value = int(setting.value)
+    except ValueError:
+        return default
+    return value if value >= 1 else default
+
+
+def set_download_batch_size(session: Session, value: int, actor: User) -> None:
+    if value < 1:
+        raise ValueError("Download batch size must be at least 1")
+    setting = session.get(ApplicationSetting, "default_download_batch_size")
+    if setting is None:
+        setting = ApplicationSetting(key="default_download_batch_size", value=str(value))
+        session.add(setting)
+    else:
+        setting.value = str(value)
+    write_audit(
+        session,
+        actor_id=actor.id,
+        action="settings.download_batch_size_updated",
+        entity_type="application_setting",
+        entity_id=setting.key,
+        detail={"value": value},
+    )

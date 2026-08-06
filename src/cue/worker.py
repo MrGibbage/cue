@@ -27,7 +27,7 @@ from cue.models import (
 from cue.providers import download_youtube, search_youtube, validate_video
 from cue.publishers import write_export_artifacts
 from cue.queue import claim_next_job, finish_job
-from cue.services import decide_resolution, queue_candidate_download, store_youtube_candidates
+from cue.services import decide_resolution, get_download_batch_size, queue_candidate_download, store_youtube_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
             )
         )
         queued_downloads = 0
+        batch_size = get_download_batch_size(session, settings.default_download_batch_size)
         for entry in entries:
             recording = session.get(Recording, entry.recording_id)
             if recording is None:
@@ -107,7 +108,7 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
             )
             resolution = decide_resolution(session, entry, candidates)
             if resolution.status == "auto_selected":
-                if queued_downloads < settings.default_download_batch_size:
+                if queued_downloads < batch_size:
                     queue_candidate_download(session, owner=owner, resolution=resolution)
                     queued_downloads += 1
                 else:

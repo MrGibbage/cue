@@ -18,6 +18,7 @@ The detailed execution plan is [implementation-plan.md](implementation-plan.md).
   completed. Dedicated MVG catalog import remains deferred.
 - 2026-08-06: Milestone 5 deterministic M3U8 export previews, approval, and
   missing-item reports completed. Notifications and backup/restore remain.
+- 2026-08-06: Milestone 6 server-rendered dashboard and settings completed.
 
 ## 1. Product decisions and acceptance specification
 
@@ -117,6 +118,16 @@ web-request workflow for a library with roughly 10,000 or more files.
 - Add operational diagnostics for rate limits, failed jobs, validation failures,
   and missing Plex items.
 - Document deployment, backup/restore, upgrade, and incident recovery.
+
+### Dashboard delivery notes
+
+- Cue's browser UI is server-rendered and uses the existing authenticated,
+  CSRF-protected control plane rather than introducing a second mutation path.
+- It includes sign-in, collection creation, JSON-list preview and approval,
+  candidate review/selection, library-import scan/approval, M3U8 export
+  preview/approval/download, and a persisted download-batch-size setting.
+- Environment-owned settings such as `CUE_M3U_PATH_PREFIX` remain deploy-time
+  configuration because they describe how a particular player mounts media.
 
 ## 9. Verification and MVG cutover
 

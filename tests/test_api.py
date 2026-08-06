@@ -24,4 +24,4 @@ def test_dashboard_shell(tmp_path):
     with TestClient(create_app(settings)) as client:
         response = client.get("/")
     assert response.status_code == 200
-    assert "Foundation service running" in response.text
+    assert "Sign in" in response.text

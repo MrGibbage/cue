@@ -60,6 +60,7 @@ from cue.services import (
     revoke_token,
     write_audit,
 )
+from cue.web import router as web_router
 
 logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="src/cue/templates")
@@ -122,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Cue", version="0.1.0", lifespan=lifespan)
     app.add_middleware(SessionMiddleware, secret_key=configured_settings.session_secret, https_only=True)
+    app.include_router(web_router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
