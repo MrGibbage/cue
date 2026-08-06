@@ -396,6 +396,34 @@ def settings_page(request: Request) -> HTMLResponse:
         return render(request, "settings.html", title="Settings", user=user, batch_size=batch_size)
 
 
+@router.get("/jobs", response_class=HTMLResponse)
+def jobs_page(request: Request) -> HTMLResponse:
+    from cue.models import Job
+    with Session(request.app.state.engine) as session:
+        user = current_user(request, session)
+        if user is None:
+            return redirect("/login")
+        jobs = list(session.scalars(select(Job).where(Job.owner_id == user.id).order_by(Job.id.desc()).limit(100)))
+        return render(request, "jobs.html", title="Jobs", user=user, jobs=jobs)
+
+
+@router.post("/jobs/{job_id}/retry")
+def retry_job_form(job_id: int, request: Request, _: Annotated[Principal, Depends(require_csrf)]) -> RedirectResponse:
+    from cue.models import Job
+
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        job = session.get(Job, job_id)
+        if job is None or job.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.status != "failed":
+            raise HTTPException(status_code=409, detail="Only failed jobs may be retried")
+        job.status, job.claimed_at, job.claimed_by = "queued", None, None
+        write_audit(session, actor_id=user.id, action="job.retried", entity_type="job", entity_id=job.id)
+        session.commit()
+    return redirect("/jobs")
+
+
 @router.post("/settings")
 def update_settings_form(
     request: Request,
