@@ -7,7 +7,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cue.auth import password_hash
-from cue.models import AuditEvent, Collection, CollectionVersion, Role, User, UserRole
+from cue.discovery import PreviewDocument
+from cue.models import (
+    AuditEvent,
+    Collection,
+    CollectionEntry,
+    CollectionVersion,
+    Job,
+    Recording,
+    Role,
+    SourceRow,
+    SourceSnapshot,
+    User,
+    UserRole,
+)
 
 
 def write_audit(
@@ -101,3 +114,107 @@ def revoke_token(session: Session, token_id: int, actor: User) -> bool:
         entity_id=token.id,
     )
     return True
+
+
+def latest_collection_version(session: Session, collection_id: int) -> CollectionVersion:
+    version = session.scalar(
+        select(CollectionVersion)
+        .where(CollectionVersion.collection_id == collection_id)
+        .order_by(CollectionVersion.version.desc())
+    )
+    if version is None:
+        raise ValueError("Collection has no version")
+    return version
+
+
+def create_json_preview(
+    session: Session,
+    *,
+    collection: Collection,
+    owner: User,
+    document: dict[str, object] | list[object],
+    preview: PreviewDocument,
+) -> SourceSnapshot:
+    snapshot = SourceSnapshot(
+        collection_id=collection.id,
+        collection_version_id=latest_collection_version(session, collection.id).id,
+        adapter="json",
+        source_name=preview.source_name,
+        source_url=preview.source_url,
+        raw_document_json=json.dumps(document, sort_keys=True),
+        created_by_id=owner.id,
+    )
+    session.add(snapshot)
+    session.flush()
+    for row in preview.rows:
+        session.add(
+            SourceRow(
+                snapshot_id=snapshot.id,
+                source_position=row.position,
+                supplied_rank=row.supplied_rank,
+                artists_json=json.dumps(row.artists) if row.artists else None,
+                title=row.title,
+                canonical_key=row.canonical_key,
+                status=row.status,
+                error=row.error,
+                raw_json=json.dumps(row.raw, sort_keys=True),
+            )
+        )
+    write_audit(
+        session,
+        actor_id=owner.id,
+        action="source_snapshot.previewed",
+        entity_type="source_snapshot",
+        entity_id=snapshot.id,
+        detail={"adapter": "json", "row_count": len(preview.rows)},
+    )
+    return snapshot
+
+
+def approve_snapshot(session: Session, snapshot: SourceSnapshot, owner: User) -> Job:
+    if snapshot.status != "previewed":
+        raise ValueError("Snapshot has already been approved")
+    rows = list(
+        session.scalars(
+            select(SourceRow)
+            .where(SourceRow.snapshot_id == snapshot.id, SourceRow.status == "accepted")
+            .order_by(SourceRow.supplied_rank.is_(None), SourceRow.supplied_rank, SourceRow.source_position)
+        )
+    )
+    for ordinal, row in enumerate(rows, start=1):
+        recording = session.scalar(select(Recording).where(Recording.canonical_key == row.canonical_key))
+        if recording is None:
+            recording = Recording(
+                artists_json=row.artists_json or "[]",
+                title=row.title or "",
+                canonical_key=row.canonical_key or "",
+            )
+            session.add(recording)
+            session.flush()
+        session.add(
+            CollectionEntry(
+                collection_version_id=snapshot.collection_version_id,
+                recording_id=recording.id,
+                source_row_id=row.id,
+                ordinal=ordinal,
+            )
+        )
+    snapshot.status = "approved"
+    snapshot.approved_at = datetime.now(UTC).replace(tzinfo=None)
+    snapshot.approved_by_id = owner.id
+    job = Job(
+        owner_id=owner.id,
+        kind="resolve_source_snapshot",
+        payload_json=json.dumps({"snapshot_id": snapshot.id}),
+    )
+    session.add(job)
+    session.flush()
+    write_audit(
+        session,
+        actor_id=owner.id,
+        action="source_snapshot.approved",
+        entity_type="source_snapshot",
+        entity_id=snapshot.id,
+        detail={"accepted_rows": len(rows), "job_id": job.id},
+    )
+    return job

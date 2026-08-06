@@ -10,6 +10,8 @@ The detailed execution plan is [implementation-plan.md](implementation-plan.md).
 - 2026-08-05: Milestone 0 foundation completed and Docker-verified.
 - 2026-08-05: Milestone 1 control plane completed and verified through the
   deployed Cue instance.
+- 2026-08-06: Milestone 2 JSON discovery completed and verified through the
+  deployed Cue instance.
 
 ## 1. Product decisions and acceptance specification
 
