@@ -84,6 +84,9 @@ def test_dashboard_creates_user_configured_billboard_preview(monkeypatch, tmp_pa
     assert "Created Billboard preview #1" in preview.text
     assert "user-configured GitHub source" in preview.text
     assert "configured: https://raw.githubusercontent.com/example/charts/main" in preview.text
+    snapshot = client.get("/snapshots/1")
+    assert "Immutable provenance and raw source capture" in snapshot.text
+    assert '"raw_source_json"' in snapshot.text
 
 
 def _csrf(client: TestClient) -> str:

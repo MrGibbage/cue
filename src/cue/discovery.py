@@ -35,6 +35,51 @@ class PreviewDocument:
     rows: list[PreviewRow]
 
 
+def apply_discovery_recipe(document: dict[str, Any], recipe: dict[str, Any]) -> dict[str, Any]:
+    """Apply explicit provider discovery rules without changing raw provenance."""
+    rules = recipe.get("discovery", {})
+    if not isinstance(rules, dict) or not isinstance(document.get("items"), list):
+        return document
+
+    def terms(name: str) -> list[str]:
+        value = rules.get(name, [])
+        if not isinstance(value, list):
+            return []
+        return [normalize_text(item) for item in value if isinstance(item, str) and item.strip()]
+
+    include, exclude, title_contains = terms("include_artists"), terms("exclude_artists"), terms("title_contains")
+    filtered: list[Any] = []
+    for item in document["items"]:
+        if not isinstance(item, dict):
+            filtered.append(item)
+            continue
+        artists = item.get("artists")
+        artist_text = (
+            " ".join(normalize_text(artist) for artist in artists if isinstance(artist, str))
+            if isinstance(artists, list)
+            else ""
+        )
+        title_text = normalize_text(item["title"]) if isinstance(item.get("title"), str) else ""
+        if include and not any(term in artist_text for term in include):
+            continue
+        if exclude and any(term in artist_text for term in exclude):
+            continue
+        if title_contains and not all(term in title_text for term in title_contains):
+            continue
+        filtered.append(item)
+    if rules.get("order") == "rank":
+        filtered.sort(key=lambda item: item.get("rank", 2**31) if isinstance(item, dict) else 2**31)
+    limit = rules.get("limit")
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 0:
+        filtered = filtered[:limit]
+    result = dict(document)
+    result["items"] = filtered
+    provenance = result.get("provenance")
+    if isinstance(provenance, dict):
+        result["provenance"] = {**provenance, "recipe_discovery_rules": rules, "rows_after_recipe": len(filtered)}
+    return result
+
+
 def parse_document(document: Any) -> PreviewDocument:
     source_name: str | None = None
     source_url: str | None = None
