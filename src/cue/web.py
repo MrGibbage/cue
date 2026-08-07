@@ -424,6 +424,9 @@ def diagnostics_page(request: Request) -> HTMLResponse:
             latest_backup=backup_files[-1].name if backup_files else None,
             failed=len(list(session.scalars(select(Job.id).where(Job.owner_id == user.id, Job.status == "failed")))),
             queued=len(list(session.scalars(select(Job.id).where(Job.owner_id == user.id, Job.status == "queued")))),
+            review=len(
+                list(session.scalars(select(CollectionResolution.id).where(CollectionResolution.status == "review")))
+            ),
         )
 
 
