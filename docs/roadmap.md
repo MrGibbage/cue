@@ -154,6 +154,27 @@ web-request workflow for a library with roughly 10,000 or more files.
 - Run Cue alongside MVG until the acceptance criteria are satisfied, then
   switch scheduled automation.
 
+## Version 3 — library intelligence and safe rehabilitation
+
+Version 3 follows MVP cutover work. Its first planned capability is a
+read-only, review-driven library quality audit for identifying lyric videos,
+visualizers/static-art uploads, and likely filename-to-recording mismatches.
+
+- Run quality audits as durable, resumable background jobs with bounded
+  evidence extraction and reuse for unchanged files.
+- Combine inexpensive local media signals with optional OCR/vision analysis;
+  sample frames rather than defaulting to frame-by-frame inference.
+- Add an opt-in audio-identification adapter boundary and compare sufficiently
+  confident returned recording identities against filename claims.
+- Preserve immutable findings, evidence, model/provider configuration, and
+  owner decisions. Present ranked review queues; never mutate media as a scan
+  side effect.
+- Share the resulting background-job, progress, cancellation, and pagination
+  foundation with the large-library import hardening work.
+
+The full proposal and acceptance criteria are in
+[library-quality-audit.md](library-quality-audit.md).
+
 ## MVP decision record
 
 ### Product direction — 2026-08-04
