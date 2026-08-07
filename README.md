@@ -20,14 +20,15 @@ inspectable, safe music-video library rather than behavioral replacement of MVG.
 
 ## Initial scope
 
-The implemented core supports JSON source previews/approval, strict
-YouTube-based video acquisition with candidate review, generic existing-library
-scan/import, and approved deterministic M3U8 exports with missing-item
-reports. A server-rendered dashboard provides those workflows without requiring
-manual API calls. Notifications, native source adapters, and the optional MVG
-importer remain ahead on the roadmap.
+The implemented core supports JSON and native-provider source previews/approval,
+strict YouTube-based video acquisition with candidate review, generic
+existing-library scan/import, and approved deterministic M3U8 exports with
+missing-item reports. A server-rendered dashboard provides those workflows
+without requiring manual API calls. Native discovery includes a
+user-configured Billboard-compatible GitHub JSON source and xmplaylist Alt
+Nation recent plays; the optional MVG importer remains deferred.
 
-Read [the product design](docs/product-design.md), [MVP plan](docs/mvp.md),
+Start with the [getting-started guide](docs/getting-started.md). Then read [the product design](docs/product-design.md), [MVP plan](docs/mvp.md),
 [migration plan](docs/migration-from-mvg.md), [technical design](docs/technical-design.md),
 and [branding notes](docs/branding.md). The runnable Compose stack is in
 `compose.yml`; `compose.example.yml` remains the original deployment/mount
