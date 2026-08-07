@@ -1,5 +1,6 @@
 import json
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -116,4 +117,43 @@ def test_xmplaylist_alt_nation_preview_preserves_provider_snapshot(monkeypatch, 
     assert response.json()["adapter"] == "xmplaylist_recent"
     assert response.json()["rows"][0]["artists"] == ["The Beaches"]
     assert response.json()["provenance"]["station"] == "altnation"
-    assert response.json()["provenance"]["raw_source_json"] == payload
+    assert response.json()["provenance"]["raw_source_json"] == {"pages": [payload]}
+
+
+def test_xmplaylist_follows_pages_until_the_requested_window(monkeypatch):
+    from cue.discovery_providers import fetch_xmplaylist_recent
+
+    now = datetime.now(UTC)
+    first = {
+        "channel": {"name": "Alt Nation"},
+        "next": "/api/station/altnation?last=1",
+        "results": [
+            {
+                "timestamp": (now - timedelta(hours=1)).isoformat(),
+                "track": {"id": "one", "artists": ["One"], "title": "New"},
+            }
+        ],
+    }
+    second = {
+        "channel": {"name": "Alt Nation"},
+        "next": None,
+        "results": [
+            {
+                "timestamp": (now - timedelta(hours=3)).isoformat(),
+                "track": {"id": "two", "artists": ["Two"], "title": "Old"},
+            }
+        ],
+    }
+
+    def fake_urlopen(request, timeout):
+        url = request.full_url
+        return _source_response(first if "last=1" not in url else second, url)
+
+    monkeypatch.setattr("cue.discovery_providers.urlopen", fake_urlopen)
+    document = fetch_xmplaylist_recent("altnation", window_hours=2).document
+    assert [item["title"] for item in document["items"]] == ["New"]
+    assert document["provenance"]["fetched_urls"] == [
+        "https://xmplaylist.com/api/station/altnation",
+        "https://xmplaylist.com/api/station/altnation?last=1",
+    ]
+    assert document["provenance"]["raw_source_json"] == {"pages": [first, second]}

@@ -12,13 +12,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cue.auth import Principal, password_hash, require_csrf
-from cue.discovery import parse_document
+from cue.discovery import apply_discovery_recipe, parse_document
 from cue.discovery_providers import fetch_billboard_hot_100, fetch_xmplaylist_recent
 from cue.models import (
+    AuditEvent,
     CandidateAsset,
     Collection,
     CollectionEntry,
     CollectionResolution,
+    CollectionVersion,
     LibraryImport,
     LibraryImportRow,
     PlaylistExport,
@@ -207,6 +209,31 @@ def collection_page(collection_id: int, request: Request) -> HTMLResponse:
         )
 
 
+@router.get("/snapshots/{snapshot_id}", response_class=HTMLResponse)
+def snapshot_page(snapshot_id: int, request: Request) -> HTMLResponse:
+    with Session(request.app.state.engine) as session:
+        user = current_user(request, session)
+        if user is None:
+            return redirect("/login")
+        snapshot = session.get(SourceSnapshot, snapshot_id)
+        if snapshot is None or session.get(Collection, snapshot.collection_id).owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        rows = list(
+            session.scalars(
+                select(SourceRow).where(SourceRow.snapshot_id == snapshot.id).order_by(SourceRow.source_position)
+            )
+        )
+        return render(
+            request,
+            "snapshot.html",
+            title=f"Snapshot #{snapshot.id}",
+            user=user,
+            snapshot=snapshot,
+            document=json.loads(snapshot.raw_document_json),
+            rows=rows,
+        )
+
+
 @router.post("/collections/{collection_id}/exports")
 def playlist_export_preview_form(
     collection_id: int, request: Request, _: Annotated[Principal, Depends(require_csrf)]
@@ -301,17 +328,20 @@ def billboard_hot_100_preview_form(
             raise HTTPException(status_code=404, detail="Collection not found")
         try:
             provider_document = fetch_billboard_hot_100(configured_source, chart_date)
+            document = apply_discovery_recipe(provider_document.document, collection_recipe(session, collection.id))
             snapshot = create_json_preview(
                 session,
                 collection=collection,
                 owner=user,
-                document=provider_document.document,
-                preview=parse_document(provider_document.document),
+                document=document,
+                preview=parse_document(document),
                 adapter="billboard_hot_100",
             )
             session.commit()
             request.session["flash"] = ("success", f"Created Billboard preview #{snapshot.id}.")
         except ValueError as exc:
+            record_provider_failure(session, user, "billboard_hot_100", exc)
+            session.commit()
             request.session["flash"] = ("error", str(exc))
     return redirect(f"/collections/{collection_id}")
 
@@ -330,19 +360,31 @@ def xmplaylist_preview_form(
             raise HTTPException(status_code=404, detail="Collection not found")
         try:
             provider_document = fetch_xmplaylist_recent("altnation", window_hours)
+            document = apply_discovery_recipe(provider_document.document, collection_recipe(session, collection.id))
             snapshot = create_json_preview(
                 session,
                 collection=collection,
                 owner=user,
-                document=provider_document.document,
-                preview=parse_document(provider_document.document),
+                document=document,
+                preview=parse_document(document),
                 adapter="xmplaylist_recent",
             )
             session.commit()
             request.session["flash"] = ("success", f"Created Alt Nation preview #{snapshot.id}.")
         except ValueError as exc:
+            record_provider_failure(session, user, "xmplaylist_recent", exc)
+            session.commit()
             request.session["flash"] = ("error", str(exc))
     return redirect(f"/collections/{collection_id}")
+
+
+def collection_recipe(session: Session, collection_id: int) -> dict[str, object]:
+    version = session.scalar(
+        select(CollectionVersion)
+        .where(CollectionVersion.collection_id == collection_id)
+        .order_by(CollectionVersion.version.desc())
+    )
+    return json.loads(version.recipe_json) if version is not None else {}
 
 
 @router.post("/snapshots/{snapshot_id}/approve")
@@ -482,6 +524,14 @@ def diagnostics_page(request: Request) -> HTMLResponse:
         if user is None:
             return redirect("/login")
         backup_files = sorted(request.app.state.settings.backup_root.glob("cue-????-??-??.sqlite3"))
+        provider_failures = list(
+            session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.actor_id == user.id, AuditEvent.action == "provider.fetch_failed")
+                .order_by(AuditEvent.id.desc())
+                .limit(10)
+            )
+        )
         return render(
             request,
             "diagnostics.html",
@@ -493,7 +543,21 @@ def diagnostics_page(request: Request) -> HTMLResponse:
             review=len(
                 list(session.scalars(select(CollectionResolution.id).where(CollectionResolution.status == "review")))
             ),
+            provider_failures=[
+                {"adapter": event.entity_id, **json.loads(event.detail_json)} for event in provider_failures
+            ],
         )
+
+
+def record_provider_failure(session: Session, user: User, adapter: str, error: ValueError) -> None:
+    write_audit(
+        session,
+        actor_id=user.id,
+        action="provider.fetch_failed",
+        entity_type="provider",
+        entity_id=adapter,
+        detail={"error": str(error)},
+    )
 
 
 @router.post("/jobs/{job_id}/retry")

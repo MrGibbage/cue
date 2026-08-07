@@ -28,7 +28,7 @@ from cue.auth import (
 )
 from cue.config import Settings, get_settings
 from cue.db import create_db_engine, database_ready, run_migrations
-from cue.discovery import parse_document
+from cue.discovery import apply_discovery_recipe, parse_document
 from cue.discovery_providers import fetch_billboard_hot_100, fetch_xmplaylist_recent
 from cue.logging import configure_logging
 from cue.models import (
@@ -315,18 +315,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_scope(principal, "collections:write")
         try:
             provider_document = fetch_billboard_hot_100(payload.configured_source, payload.chart_date)
-            preview = parse_document(provider_document.document)
         except ValueError as exc:
+            record_provider_failure(request, principal.user, "billboard_hot_100", exc)
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         with database_session(request) as session:
             collection = session.get(Collection, collection_id)
             if collection is None or collection.owner_id != principal.user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+            document = apply_discovery_recipe(provider_document.document, collection_recipe(session, collection.id))
+            preview = parse_document(document)
             snapshot = create_json_preview(
                 session,
                 collection=collection,
                 owner=principal.user,
-                document=provider_document.document,
+                document=document,
                 preview=preview,
                 adapter="billboard_hot_100",
             )
@@ -344,18 +346,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_scope(principal, "collections:write")
         try:
             provider_document = fetch_xmplaylist_recent(payload.station, payload.window_hours)
-            preview = parse_document(provider_document.document)
         except ValueError as exc:
+            record_provider_failure(request, principal.user, "xmplaylist_recent", exc)
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         with database_session(request) as session:
             collection = session.get(Collection, collection_id)
             if collection is None or collection.owner_id != principal.user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+            document = apply_discovery_recipe(provider_document.document, collection_recipe(session, collection.id))
+            preview = parse_document(document)
             snapshot = create_json_preview(
                 session,
                 collection=collection,
                 owner=principal.user,
-                document=provider_document.document,
+                document=document,
                 preview=preview,
                 adapter="xmplaylist_recent",
             )
@@ -795,6 +799,28 @@ def snapshot_summary(snapshot: SourceSnapshot, rows: list[Any]) -> dict[str, obj
             for row in rows
         ],
     }
+
+
+def collection_recipe(session: Session, collection_id: int) -> dict[str, Any]:
+    version = session.scalar(
+        select(CollectionVersion)
+        .where(CollectionVersion.collection_id == collection_id)
+        .order_by(CollectionVersion.version.desc())
+    )
+    return json.loads(version.recipe_json) if version is not None else {}
+
+
+def record_provider_failure(request: Request, user: User, adapter: str, error: ValueError) -> None:
+    with database_session(request) as session:
+        write_audit(
+            session,
+            actor_id=user.id,
+            action="provider.fetch_failed",
+            entity_type="provider",
+            entity_id=adapter,
+            detail={"error": str(error)},
+        )
+        session.commit()
 
 
 def job_summary(session: Session, job: Job) -> dict[str, object]:

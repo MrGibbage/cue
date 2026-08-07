@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -70,29 +70,39 @@ def fetch_billboard_hot_100(configured_source: str, chart_date: date | None = No
 
 
 def fetch_xmplaylist_recent(station: str = "altnation", window_hours: int = 24) -> ProviderDocument:
-    """Capture a recent-play page from xmplaylist as an immutable preview."""
+    """Capture xmplaylist pages through the requested recent-play window."""
     station = station.strip().lower()
     if not station or not station.replace("-", "").isalnum():
         raise ValueError("xmplaylist station must contain only lowercase letters, digits, and hyphens")
     if not 1 <= window_hours <= 24 * 30:
         raise ValueError("xmplaylist window must be between 1 hour and 30 days")
     requested_url = f"https://xmplaylist.com/api/station/{station}"
-    request = Request(requested_url, headers={"Accept": "application/json", "User-Agent": "Cue/0.1"})
-    try:
-        with urlopen(request, timeout=20) as response:
-            fetched_url = response.geturl()
-            if urlsplit(fetched_url).hostname != "xmplaylist.com":
-                raise ValueError("xmplaylist redirected outside xmplaylist.com")
-            raw_source = json.loads(response.read().decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        raise ValueError(f"Could not fetch xmplaylist source JSON: {exc}") from exc
-    if not isinstance(raw_source, dict) or not isinstance(raw_source.get("results"), list):
-        raise ValueError("xmplaylist source JSON must contain a results array")
-
     fetched_at = datetime.now(UTC)
     cutoff = fetched_at - timedelta(hours=window_hours)
+    next_url: str | None = requested_url
+    fetched_urls: list[str] = []
+    raw_pages: list[dict[str, Any]] = []
+    source_rows: list[Any] = []
+    channel: dict[str, Any] | None = None
+    while next_url is not None:
+        raw_source, fetched_url = _fetch_xmplaylist_page(next_url)
+        if fetched_url in fetched_urls:
+            break
+        fetched_urls.append(fetched_url)
+        raw_pages.append(raw_source)
+        source_rows.extend(raw_source["results"])
+        if isinstance(raw_source.get("channel"), dict):
+            channel = raw_source["channel"]
+        oldest = _oldest_timestamp(raw_source["results"])
+        next_value = raw_source.get("next")
+        if oldest is not None and oldest < cutoff:
+            break
+        next_url = urljoin(fetched_url, next_value) if isinstance(next_value, str) and next_value else None
+        if next_url is not None and urlsplit(next_url).hostname != "xmplaylist.com":
+            raise ValueError("xmplaylist next page points outside xmplaylist.com")
+
     items: list[dict[str, Any]] = []
-    for row in raw_source["results"]:
+    for row in source_rows:
         if not isinstance(row, dict):
             items.append({"provider_row": row})
             continue
@@ -117,23 +127,49 @@ def fetch_xmplaylist_recent(station: str = "altnation", window_hours: int = 24) 
                 "provider_row": row,
             }
         )
-    channel = raw_source.get("channel")
-    channel_name = channel.get("name") if isinstance(channel, dict) else station
+    channel_name = channel.get("name") if channel else station
     return ProviderDocument(
         document={
             "source": f"xmplaylist recent plays: {channel_name}",
-            "source_url": fetched_url,
+            "source_url": fetched_urls[0],
             "items": items,
             "provenance": {
                 "adapter": "xmplaylist_recent",
                 "station": station,
                 "window_hours": window_hours,
-                "fetched_url": fetched_url,
+                "fetched_url": fetched_urls[0],
+                "fetched_urls": fetched_urls,
                 "fetched_at": fetched_at.isoformat(),
-                "raw_source_json": raw_source,
+                "raw_source_json": {"pages": raw_pages},
             },
         }
     )
+
+
+def _fetch_xmplaylist_page(url: str) -> tuple[dict[str, Any], str]:
+    request = Request(url, headers={"Accept": "application/json", "User-Agent": "Cue/0.1"})
+    try:
+        with urlopen(request, timeout=20) as response:
+            fetched_url = response.geturl()
+            if urlsplit(fetched_url).hostname != "xmplaylist.com":
+                raise ValueError("xmplaylist redirected outside xmplaylist.com")
+            raw_source = json.loads(response.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"Could not fetch xmplaylist source JSON: {exc}") from exc
+    if not isinstance(raw_source, dict) or not isinstance(raw_source.get("results"), list):
+        raise ValueError("xmplaylist source JSON must contain a results array")
+    return raw_source, fetched_url
+
+
+def _oldest_timestamp(rows: list[Any]) -> datetime | None:
+    timestamps: list[datetime] = []
+    for row in rows:
+        if isinstance(row, dict) and isinstance(row.get("timestamp"), str):
+            try:
+                timestamps.append(datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")))
+            except ValueError:
+                continue
+    return min(timestamps) if timestamps else None
 
 
 def billboard_source_url(configured_source: str, chart_date: date | None = None) -> str:
