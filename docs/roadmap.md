@@ -19,8 +19,14 @@ The detailed execution plan is [implementation-plan.md](implementation-plan.md).
 - 2026-08-06: Milestone 5 deterministic M3U8 export previews, approval, and
   missing-item reports completed. Notifications and backup/restore remain.
 - 2026-08-06: Milestone 6 server-rendered dashboard and settings completed.
-- 2026-08-06: Milestone 7 operational reliability completed: verified daily
-  backups, Apprise alerts, job recovery, and diagnostics.
+- 2026-08-06: Milestone 7 operational reliability implemented: verified daily
+  backups, Apprise alerts, job recovery, and diagnostics. Deployment status is
+  verified as part of each release, rather than inferred from implementation.
+- 2026-08-07: Milestone 8 provider work started with a user-configured
+  Billboard Hot 100 adapter. It preserves a raw immutable source capture and
+  uses the normal preview/explicit-approval lifecycle.
+- 2026-08-07: Added the xmplaylist recent-play adapter with Alt Nation as the
+  dashboard reference station and an explicit lookback window.
 
 ## 1. Product decisions and acceptance specification
 

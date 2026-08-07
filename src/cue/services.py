@@ -224,11 +224,12 @@ def create_json_preview(
     owner: User,
     document: dict[str, object] | list[object],
     preview: PreviewDocument,
+    adapter: str = "json",
 ) -> SourceSnapshot:
     snapshot = SourceSnapshot(
         collection_id=collection.id,
         collection_version_id=latest_collection_version(session, collection.id).id,
-        adapter="json",
+        adapter=adapter,
         source_name=preview.source_name,
         source_url=preview.source_url,
         raw_document_json=json.dumps(document, sort_keys=True),
@@ -256,7 +257,7 @@ def create_json_preview(
         action="source_snapshot.previewed",
         entity_type="source_snapshot",
         entity_id=snapshot.id,
-        detail={"adapter": "json", "row_count": len(preview.rows)},
+        detail={"adapter": adapter, "row_count": len(preview.rows)},
     )
     return snapshot
 

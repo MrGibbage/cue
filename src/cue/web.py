@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from cue.auth import Principal, password_hash, require_csrf
 from cue.discovery import parse_document
+from cue.discovery_providers import fetch_billboard_hot_100, fetch_xmplaylist_recent
 from cue.models import (
     CandidateAsset,
     Collection,
@@ -161,6 +162,11 @@ def collection_page(collection_id: int, request: Request) -> HTMLResponse:
                 .order_by(SourceSnapshot.id.desc())
             )
         )
+        snapshot_provenance = {
+            snapshot.id: json.loads(snapshot.raw_document_json).get("provenance")
+            for snapshot in snapshots
+            if snapshot.adapter != "json"
+        }
         latest = next((snapshot for snapshot in snapshots if snapshot.status == "approved"), None)
         items: list[dict[str, object]] = []
         if latest:
@@ -195,6 +201,7 @@ def collection_page(collection_id: int, request: Request) -> HTMLResponse:
             user=user,
             collection=collection,
             snapshots=snapshots,
+            snapshot_provenance=snapshot_provenance,
             latest=latest,
             items=items,
         )
@@ -276,6 +283,65 @@ def json_preview_form(
             request.session["flash"] = ("success", f"Created preview #{snapshot.id}.")
         except (ValueError, json.JSONDecodeError) as exc:
             request.session["flash"] = ("error", f"JSON was not accepted: {exc}")
+    return redirect(f"/collections/{collection_id}")
+
+
+@router.post("/collections/{collection_id}/billboard-hot-100-previews")
+def billboard_hot_100_preview_form(
+    collection_id: int,
+    request: Request,
+    configured_source: Annotated[str, Form()],
+    chart_date: Annotated[date | None, Form()] = None,
+    _: Annotated[Principal, Depends(require_csrf)] = None,
+) -> RedirectResponse:
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        collection = session.get(Collection, collection_id)
+        if collection is None or collection.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        try:
+            provider_document = fetch_billboard_hot_100(configured_source, chart_date)
+            snapshot = create_json_preview(
+                session,
+                collection=collection,
+                owner=user,
+                document=provider_document.document,
+                preview=parse_document(provider_document.document),
+                adapter="billboard_hot_100",
+            )
+            session.commit()
+            request.session["flash"] = ("success", f"Created Billboard preview #{snapshot.id}.")
+        except ValueError as exc:
+            request.session["flash"] = ("error", str(exc))
+    return redirect(f"/collections/{collection_id}")
+
+
+@router.post("/collections/{collection_id}/xmplaylist-previews")
+def xmplaylist_preview_form(
+    collection_id: int,
+    request: Request,
+    window_hours: Annotated[int, Form()] = 24,
+    _: Annotated[Principal, Depends(require_csrf)] = None,
+) -> RedirectResponse:
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        collection = session.get(Collection, collection_id)
+        if collection is None or collection.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        try:
+            provider_document = fetch_xmplaylist_recent("altnation", window_hours)
+            snapshot = create_json_preview(
+                session,
+                collection=collection,
+                owner=user,
+                document=provider_document.document,
+                preview=parse_document(provider_document.document),
+                adapter="xmplaylist_recent",
+            )
+            session.commit()
+            request.session["flash"] = ("success", f"Created Alt Nation preview #{snapshot.id}.")
+        except ValueError as exc:
+            request.session["flash"] = ("error", str(exc))
     return redirect(f"/collections/{collection_id}")
 
 

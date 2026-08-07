@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from cue.api import create_app
 from cue.config import Settings
+from cue.discovery_providers import ProviderDocument
 
 
 def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
@@ -42,6 +43,47 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
         )
         assert saved.status_code == 303
         assert 'value="7"' in client.get("/settings").text
+
+
+def test_dashboard_creates_user_configured_billboard_preview(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "cue.web.fetch_billboard_hot_100",
+        lambda configured_source, chart_date: ProviderDocument(
+            {
+                "source": "Billboard Hot 100 (user-configured GitHub source)",
+                "source_url": "https://raw.githubusercontent.com/example/charts/main/recent.json",
+                "items": [{"artists": ["Sabrina Carpenter"], "title": "Espresso", "rank": 1}],
+                "provenance": {
+                    "adapter": "billboard_hot_100",
+                    "configured_url": configured_source,
+                    "fetched_url": "https://raw.githubusercontent.com/example/charts/main/recent.json",
+                    "fetched_at": "2026-08-07T00:00:00+00:00",
+                    "raw_source_json": {"data": []},
+                },
+            }
+        ),
+    )
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'cue.sqlite3'}",
+        media_root=tmp_path,
+        session_secret="test-session-secret-that-is-long-enough",
+        bootstrap_admin_username="owner",
+        bootstrap_admin_password="correct-horse-battery-staple",
+    )
+    with TestClient(create_app(settings), base_url="https://testserver") as client:
+        client.post("/login", data={"username": "owner", "password": "correct-horse-battery-staple"})
+        client.post("/collections", data={"name": "Chart", "csrf_token": _csrf(client)})
+        preview = client.post(
+            "/collections/1/billboard-hot-100-previews",
+            data={
+                "csrf_token": _csrf(client),
+                "configured_source": "https://raw.githubusercontent.com/example/charts/main",
+            },
+            follow_redirects=True,
+        )
+    assert "Created Billboard preview #1" in preview.text
+    assert "user-configured GitHub source" in preview.text
+    assert "configured: https://raw.githubusercontent.com/example/charts/main" in preview.text
 
 
 def _csrf(client: TestClient) -> str:

@@ -4,7 +4,7 @@ import json
 import logging
 import secrets
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -29,6 +29,7 @@ from cue.auth import (
 from cue.config import Settings, get_settings
 from cue.db import create_db_engine, database_ready, run_migrations
 from cue.discovery import parse_document
+from cue.discovery_providers import fetch_billboard_hot_100, fetch_xmplaylist_recent
 from cue.logging import configure_logging
 from cue.models import (
     ApiToken,
@@ -83,6 +84,16 @@ class CollectionRequest(BaseModel):
 
 class JsonPreviewRequest(BaseModel):
     document: dict[str, Any] | list[Any]
+
+
+class BillboardPreviewRequest(BaseModel):
+    configured_source: str = Field(min_length=1, max_length=2048)
+    chart_date: date | None = None
+
+
+class XmplaylistPreviewRequest(BaseModel):
+    station: str = Field(default="altnation", min_length=1, max_length=64)
+    window_hours: int = Field(default=24, ge=1, le=24 * 30)
 
 
 class CandidateSelectionRequest(BaseModel):
@@ -289,6 +300,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 owner=principal.user,
                 document=payload.document,
                 preview=preview,
+            )
+            session.commit()
+            return snapshot_summary(snapshot, preview.rows)
+
+    @app.post("/api/v1/collections/{collection_id}/billboard-hot-100-previews", status_code=status.HTTP_201_CREATED)
+    def post_billboard_hot_100_preview(
+        collection_id: int,
+        payload: BillboardPreviewRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        try:
+            provider_document = fetch_billboard_hot_100(payload.configured_source, payload.chart_date)
+            preview = parse_document(provider_document.document)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        with database_session(request) as session:
+            collection = session.get(Collection, collection_id)
+            if collection is None or collection.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+            snapshot = create_json_preview(
+                session,
+                collection=collection,
+                owner=principal.user,
+                document=provider_document.document,
+                preview=preview,
+                adapter="billboard_hot_100",
+            )
+            session.commit()
+            return snapshot_summary(snapshot, preview.rows)
+
+    @app.post("/api/v1/collections/{collection_id}/xmplaylist-previews", status_code=status.HTTP_201_CREATED)
+    def post_xmplaylist_preview(
+        collection_id: int,
+        payload: XmplaylistPreviewRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        try:
+            provider_document = fetch_xmplaylist_recent(payload.station, payload.window_hours)
+            preview = parse_document(provider_document.document)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        with database_session(request) as session:
+            collection = session.get(Collection, collection_id)
+            if collection is None or collection.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+            snapshot = create_json_preview(
+                session,
+                collection=collection,
+                owner=principal.user,
+                document=provider_document.document,
+                preview=preview,
+                adapter="xmplaylist_recent",
             )
             session.commit()
             return snapshot_summary(snapshot, preview.rows)
@@ -703,12 +772,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def snapshot_summary(snapshot: SourceSnapshot, rows: list[Any]) -> dict[str, object]:
+    document = json.loads(snapshot.raw_document_json)
+    provenance = document.get("provenance") if isinstance(document, dict) else None
     return {
         "id": snapshot.id,
         "collection_id": snapshot.collection_id,
         "status": snapshot.status,
+        "adapter": snapshot.adapter,
         "source": snapshot.source_name,
         "source_url": snapshot.source_url,
+        "provenance": provenance if isinstance(provenance, dict) else None,
         "counts": {state: sum(row.status == state for row in rows) for state in ("accepted", "duplicate", "rejected")},
         "rows": [
             {
