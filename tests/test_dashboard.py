@@ -51,6 +51,14 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
         snapshot_page = client.get("/snapshots/1").text
         assert "Source #" in snapshot_page
         assert ">2</td>" in snapshot_page
+        invalid_json = client.post(
+            "/collections/1/json-previews",
+            data={"csrf_token": _csrf(client), "document": '[{"artists":["Rush"],"title":"Tom Sawyer"'},
+            follow_redirects=False,
+        )
+        assert invalid_json.status_code == 200
+        assert "JSON was not accepted" in invalid_json.text
+        assert "Tom Sawyer" in invalid_json.text
         upload = client.post(
             "/collections/1/json-upload-previews",
             data={"csrf_token": _csrf(client)},

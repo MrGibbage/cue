@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -150,7 +150,7 @@ def create_collection_form(
 
 
 @router.get("/collections/{collection_id}", response_class=HTMLResponse)
-def collection_page(collection_id: int, request: Request) -> HTMLResponse:
+def collection_page(collection_id: int, request: Request, draft_document: str = "") -> HTMLResponse:
     with Session(request.app.state.engine) as session:
         user = current_user(request, session)
         if user is None:
@@ -215,6 +215,7 @@ def collection_page(collection_id: int, request: Request) -> HTMLResponse:
             snapshot_provenance=snapshot_provenance,
             latest=latest,
             items=items,
+            draft_document=draft_document,
         )
 
 
@@ -305,7 +306,7 @@ def json_preview_form(
     request: Request,
     document: Annotated[str, Form()],
     _: Annotated[Principal, Depends(require_csrf)],
-) -> RedirectResponse:
+) -> Response:
     with Session(request.app.state.engine) as session:
         user = require_web_user(request, session)
         collection = session.get(Collection, collection_id)
@@ -321,6 +322,7 @@ def json_preview_form(
             request.session["flash"] = ("success", preview_created_message(snapshot.id, preview.rows))
         except (ValueError, json.JSONDecodeError) as exc:
             request.session["flash"] = ("error", f"JSON was not accepted: {exc}")
+            return collection_page(collection_id, request, draft_document=document)
     return redirect(f"/collections/{collection_id}")
 
 
