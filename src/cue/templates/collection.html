@@ -7,7 +7,7 @@
   <form method="post" action="/collections/{{ collection.id }}/json-previews">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <h2>Paste song-list JSON</h2>
-    <textarea name="document" placeholder='[{"artists":["Rush"],"title":"Tom Sawyer"}]' required></textarea>
+    <textarea name="document" placeholder='[{"artists":["Rush"],"title":"Tom Sawyer"}]' required>{{ draft_document }}</textarea>
     <br><br><button>Preview list</button>
   </form>
   <form method="post" action="/collections/{{ collection.id }}/json-upload-previews" enctype="multipart/form-data">

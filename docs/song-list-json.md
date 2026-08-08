@@ -60,6 +60,8 @@ An array is also valid when no document-level source metadata is needed:
 - Valid entries are accepted even if other entries are invalid.
 - Duplicate desired recordings in one list are reported; the first occurrence
   is retained.
+- If pasted JSON cannot be parsed, Cue keeps the pasted draft on the error
+  page so it can be corrected and resubmitted.
 - Cue retains raw input and preview rows as an immutable source snapshot.
 - A preview does not create matching or download jobs. Use **Approve & queue**
   as a distinct action after reviewing it.
