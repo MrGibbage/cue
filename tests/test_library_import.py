@@ -71,6 +71,9 @@ def test_existing_library_preview_and_approval_are_safe_and_idempotent(tmp_path)
         assert assets.json()["total_rows"] == 1
         assert assets.json()["rows"][0]["relative_path"] == managed.name
         assert assets.json()["rows"][0]["source"] == "library_import"
+        searched_assets = client.get("/api/v1/library/assets?query=yellow", headers=headers).json()
+        assert searched_assets["total_rows"] == 1
+        assert searched_assets["query"] == "yellow"
 
         second_preview = client.post("/api/v1/library-imports/previews", headers=headers, json={})
         assert second_preview.status_code == 201

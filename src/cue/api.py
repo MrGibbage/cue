@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Respo
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -456,15 +456,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         principal: Annotated[Principal, Depends(authenticate)],
         page: Annotated[int, Query(ge=1)] = 1,
         page_size: Annotated[int, Query(ge=1, le=MAX_LIBRARY_PAGE_SIZE)] = DEFAULT_LIBRARY_PAGE_SIZE,
+        query: Annotated[str, Query(max_length=128)] = "",
     ) -> dict[str, object]:
         require_scope(principal, "collections:read")
         from cue.models import PublishedAsset, Recording
 
         with database_session(request) as session:
-            total_rows = session.scalar(select(func.count()).select_from(PublishedAsset)) or 0
+            needle = query.strip()
+            filters = []
+            if needle:
+                pattern = f"%{needle}%"
+                filters.append(
+                    or_(
+                        PublishedAsset.relative_path.ilike(pattern),
+                        Recording.title.ilike(pattern),
+                        Recording.artists_json.ilike(pattern),
+                    )
+                )
+            total_rows = session.scalar(
+                select(func.count())
+                .select_from(PublishedAsset)
+                .join(Recording, PublishedAsset.recording_id == Recording.id)
+                .where(*filters)
+            ) or 0
             rows = session.execute(
                 select(PublishedAsset, Recording)
                 .join(Recording, PublishedAsset.recording_id == Recording.id)
+                .where(*filters)
                 .order_by(PublishedAsset.relative_path)
                 .offset((page - 1) * page_size)
                 .limit(page_size)
@@ -473,6 +491,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "total_rows": total_rows,
                 "page": page,
                 "page_size": page_size,
+                "query": needle,
                 "rows": [
                     {
                         "id": asset.id,
