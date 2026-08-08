@@ -2,8 +2,8 @@
 
 Cue is list-first: bring a set of songs from any source, preview it, and only
 then decide whether to queue matching and acquisition. Paste JSON into a
-collection, upload a UTF-8 `.json` file (up to 2 MiB), or send the same shape
-to the API.
+collection, upload a UTF-8 `.json` file, or send the same shape to the API.
+Every intake path accepts documents up to 2 MiB.
 
 ## Recommended document
 

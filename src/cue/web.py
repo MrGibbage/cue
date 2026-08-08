@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cue.auth import Principal, password_hash, require_csrf
-from cue.discovery import apply_discovery_recipe, parse_document, parse_uploaded_document
+from cue.discovery import apply_discovery_recipe, parse_document, parse_json_document_bytes, parse_uploaded_document
 from cue.discovery_providers import fetch_billboard_hot_100, fetch_xmplaylist_recent
 from cue.models import (
     AuditEvent,
@@ -312,7 +312,7 @@ def json_preview_form(
         if collection is None or collection.owner_id != user.id:
             raise HTTPException(status_code=404, detail="Collection not found")
         try:
-            payload = json.loads(document)
+            payload = parse_json_document_bytes(document.encode("utf-8"))
             preview = parse_document(payload)
             snapshot = create_json_preview(
                 session, collection=collection, owner=user, document=payload, preview=preview
