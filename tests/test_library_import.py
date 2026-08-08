@@ -55,6 +55,10 @@ def test_existing_library_preview_and_approval_are_safe_and_idempotent(tmp_path)
         assert preview.json()["counts"] == {"accepted": 1, "already_imported": 0, "review": 1, "imported": 0}
         assert managed.read_bytes() == b"video"
         library_import_id = preview.json()["id"]
+        paged = client.get(f"/api/v1/library-imports/{library_import_id}?page_size=1", headers=headers)
+        assert paged.json()["total_rows"] == 2
+        assert paged.json()["counts"] == {"accepted": 1, "already_imported": 0, "review": 1, "imported": 0}
+        assert len(paged.json()["rows"]) == 1
 
         approval = client.post(f"/api/v1/library-imports/{library_import_id}/approvals", headers=headers)
         assert approval.status_code == 200

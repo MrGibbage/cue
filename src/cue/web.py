@@ -6,10 +6,10 @@ from collections.abc import Iterable
 from datetime import UTC, date, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cue.auth import Principal, password_hash, require_csrf
@@ -46,6 +46,7 @@ from cue.services import (
 
 templates = Jinja2Templates(directory="src/cue/templates")
 router = APIRouter(include_in_schema=False)
+LIBRARY_PAGE_SIZE = 100
 
 
 def redirect(path: str) -> RedirectResponse:
@@ -530,7 +531,9 @@ def library_preview_form(request: Request, _: Annotated[Principal, Depends(requi
 
 
 @router.get("/library/imports/{library_import_id}", response_class=HTMLResponse)
-def library_import_page(library_import_id: int, request: Request) -> HTMLResponse:
+def library_import_page(
+    library_import_id: int, request: Request, page: Annotated[int, Query(ge=1)] = 1
+) -> HTMLResponse:
     with Session(request.app.state.engine) as session:
         user = current_user(request, session)
         if user is None:
@@ -538,8 +541,19 @@ def library_import_page(library_import_id: int, request: Request) -> HTMLRespons
         library_import = session.get(LibraryImport, library_import_id)
         if library_import is None or library_import.owner_id != user.id:
             raise HTTPException(status_code=404, detail="Library import not found")
+        total_rows = session.scalar(
+            select(func.count())
+            .select_from(LibraryImportRow)
+            .where(LibraryImportRow.library_import_id == library_import.id)
+        ) or 0
         rows = list(
-            session.scalars(select(LibraryImportRow).where(LibraryImportRow.library_import_id == library_import.id))
+            session.scalars(
+                select(LibraryImportRow)
+                .where(LibraryImportRow.library_import_id == library_import.id)
+                .order_by(LibraryImportRow.id)
+                .offset((page - 1) * LIBRARY_PAGE_SIZE)
+                .limit(LIBRARY_PAGE_SIZE)
+            )
         )
         return render(
             request,
@@ -548,6 +562,9 @@ def library_import_page(library_import_id: int, request: Request) -> HTMLRespons
             user=user,
             library_import=library_import,
             rows=rows,
+            total_rows=total_rows,
+            page=page,
+            has_next=page * LIBRARY_PAGE_SIZE < total_rows,
         )
 
 

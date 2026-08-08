@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import uvicorn
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -106,6 +106,10 @@ class LibraryImportPreviewRequest(BaseModel):
 
 class PlaylistExportPreviewRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+DEFAULT_LIBRARY_PAGE_SIZE = 100
+MAX_LIBRARY_PAGE_SIZE = 500
 
 
 def database_session(request: Request) -> Session:
@@ -416,6 +420,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: LibraryImportPreviewRequest,
         request: Request,
         principal: Annotated[Principal, Depends(require_csrf)],
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=MAX_LIBRARY_PAGE_SIZE)] = DEFAULT_LIBRARY_PAGE_SIZE,
     ) -> dict[str, object]:
         require_administrator(request, principal)
         require_scope(principal, "collections:write")
@@ -427,32 +433,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 source_name=payload.source_name,
             )
             session.commit()
-            rows = list(
-                session.scalars(
-                    select(LibraryImportRow).where(LibraryImportRow.library_import_id == library_import.id)
-                )
-            )
-            return library_import_summary(library_import, rows)
+            return paginated_library_import_summary(session, library_import, page, page_size)
 
     @app.get("/api/v1/library-imports/{library_import_id}")
     def get_library_import(
         library_import_id: int,
         request: Request,
         principal: Annotated[Principal, Depends(authenticate)],
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=MAX_LIBRARY_PAGE_SIZE)] = DEFAULT_LIBRARY_PAGE_SIZE,
     ) -> dict[str, object]:
         require_scope(principal, "collections:read")
         with database_session(request) as session:
             library_import = session.get(LibraryImport, library_import_id)
             if library_import is None or library_import.owner_id != principal.user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Library import not found")
-            rows = list(
-                session.scalars(
-                    select(LibraryImportRow)
-                    .where(LibraryImportRow.library_import_id == library_import.id)
-                    .order_by(LibraryImportRow.id)
-                )
-            )
-            return library_import_summary(library_import, rows)
+            return paginated_library_import_summary(session, library_import, page, page_size)
 
     @app.get("/api/v1/library/assets")
     def list_library_assets(
@@ -884,6 +880,32 @@ def library_import_summary(library_import: LibraryImport, rows: list[LibraryImpo
             for row in rows
         ],
     }
+
+
+def paginated_library_import_summary(
+    session: Session, library_import: LibraryImport, page: int, page_size: int
+) -> dict[str, object]:
+    states = ("accepted", "already_imported", "review", "imported")
+    where = LibraryImportRow.library_import_id == library_import.id
+    total_rows = session.scalar(select(func.count()).select_from(LibraryImportRow).where(where)) or 0
+    state_counts = dict(
+        session.execute(
+            select(LibraryImportRow.status, func.count()).where(where).group_by(LibraryImportRow.status)
+        ).all()
+    )
+    rows = list(
+        session.scalars(
+            select(LibraryImportRow)
+            .where(where)
+            .order_by(LibraryImportRow.id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    summary = library_import_summary(library_import, rows)
+    summary["counts"] = {state: state_counts.get(state, 0) for state in states}
+    summary.update({"total_rows": total_rows, "page": page, "page_size": page_size})
+    return summary
 
 
 def playlist_export_summary(playlist_export: PlaylistExport) -> dict[str, object]:
