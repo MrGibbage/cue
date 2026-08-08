@@ -37,7 +37,7 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
                 "csrf_token": _csrf(client),
                 "document": (
                     '{"source":"External list","source_url":"javascript:alert(1)",'
-                    '"items":[{"artists":["Rush"],"title":"Tom Sawyer"}]}'
+                    '"items":[{"artists":["Rush"],"title":"Tom Sawyer","rank":2}]}'
                 ),
             },
             follow_redirects=False,
@@ -48,6 +48,9 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
         assert "1 accepted · 0 duplicates · 0 rejected" in collection_page
         assert "javascript:alert(1)" in collection_page
         assert 'href="javascript:' not in collection_page
+        snapshot_page = client.get("/snapshots/1").text
+        assert "Source #" in snapshot_page
+        assert ">2</td>" in snapshot_page
         upload = client.post(
             "/collections/1/json-upload-previews",
             data={"csrf_token": _csrf(client)},

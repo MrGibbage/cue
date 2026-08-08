@@ -46,7 +46,8 @@ An array is also valid when no document-level source metadata is needed:
 ## Optional fields
 
 - `rank`: integer ordering. Cue orders ranked items first by ascending rank;
-  unranked items retain source order after them.
+  unranked items retain source order after them. The immutable snapshot displays
+  both source position and supplied rank for review.
 - `source`, `source_url`: document-level provenance. HTTP(S) `source_url`
   values are displayed as links; any other value is retained as plain text.
 - `notes`, `year`, `album`, `source_id`, and other source-specific fields:
