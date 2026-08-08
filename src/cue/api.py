@@ -28,7 +28,7 @@ from cue.auth import (
 )
 from cue.config import Settings, get_settings
 from cue.db import create_db_engine, database_ready, run_migrations
-from cue.discovery import apply_discovery_recipe, parse_document
+from cue.discovery import apply_discovery_recipe, parse_document, parse_uploaded_document
 from cue.discovery_providers import fetch_billboard_hot_100, fetch_xmplaylist_recent
 from cue.logging import configure_logging
 from cue.models import (
@@ -714,7 +714,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not file.filename or not file.filename.lower().endswith(".json"):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Upload a .json file")
         try:
-            document = json.loads((await file.read()).decode("utf-8"))
+            document = parse_uploaded_document(await file.read())
             preview = parse_document(document)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc

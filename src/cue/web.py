@@ -5,14 +5,14 @@ import secrets
 from datetime import UTC, date, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cue.auth import Principal, password_hash, require_csrf
-from cue.discovery import apply_discovery_recipe, parse_document
+from cue.discovery import apply_discovery_recipe, parse_document, parse_uploaded_document
 from cue.discovery_providers import fetch_billboard_hot_100, fetch_xmplaylist_recent
 from cue.models import (
     AuditEvent,
@@ -309,6 +309,32 @@ def json_preview_form(
             session.commit()
             request.session["flash"] = ("success", f"Created preview #{snapshot.id}.")
         except (ValueError, json.JSONDecodeError) as exc:
+            request.session["flash"] = ("error", f"JSON was not accepted: {exc}")
+    return redirect(f"/collections/{collection_id}")
+
+
+@router.post("/collections/{collection_id}/json-upload-previews")
+async def json_upload_preview_form(
+    collection_id: int,
+    request: Request,
+    _: Annotated[Principal, Depends(require_csrf)],
+    file: Annotated[UploadFile, File()],
+) -> RedirectResponse:
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        collection = session.get(Collection, collection_id)
+        if collection is None or collection.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        try:
+            if not file.filename or not file.filename.lower().endswith(".json"):
+                raise ValueError("Upload a .json file")
+            payload = parse_uploaded_document(await file.read())
+            snapshot = create_json_preview(
+                session, collection=collection, owner=user, document=payload, preview=parse_document(payload)
+            )
+            session.commit()
+            request.session["flash"] = ("success", f"Created preview #{snapshot.id} from {file.filename}.")
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
             request.session["flash"] = ("error", f"JSON was not accepted: {exc}")
     return redirect(f"/collections/{collection_id}")
 
