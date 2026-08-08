@@ -6,7 +6,7 @@
 <p class="muted">{{ counts.accepted }} accepted · {{ counts.duplicate }} duplicates · {{ counts.rejected }} rejected</p>
 {% if snapshot.source_url %}<p>{% if snapshot.source_url.startswith(("https://", "http://")) %}<a href="{{ snapshot.source_url }}" target="_blank" rel="noopener noreferrer">Fetched source</a>{% else %}<span class="muted">{{ snapshot.source_url }}</span>{% endif %}</p>{% endif %}
 <h2>Preview rows</h2>
-<table><tr><th>#</th><th>Recording</th><th>Status</th></tr>{% for row in rows %}<tr><td>{{ row.source_position + 1 }}</td><td>{{ row.artists_json or '—' }}{% if row.title %} — {{ row.title }}{% endif %}</td><td>{{ row.status }}{% if row.error %}<br><span class="muted">{{ row.error }}</span>{% endif %}</td></tr>{% endfor %}</table>
+<table><tr><th>Source #</th><th>Rank</th><th>Recording</th><th>Status</th></tr>{% for row in rows %}<tr><td>{{ row.source_position + 1 }}</td><td>{{ row.supplied_rank if row.supplied_rank is not none else '—' }}</td><td>{{ row.artists_json or '—' }}{% if row.title %} — {{ row.title }}{% endif %}</td><td>{{ row.status }}{% if row.error %}<br><span class="muted">{{ row.error }}</span>{% endif %}</td></tr>{% endfor %}</table>
 <h2>Immutable provenance and raw source capture</h2>
 <pre>{{ document | tojson(indent=2) }}</pre>
 {% endblock %}
