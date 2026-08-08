@@ -52,6 +52,8 @@
   <h2>Snapshots</h2>
   {% for snapshot in snapshots %}
   <p><a href="/snapshots/{{ snapshot.id }}">#{{ snapshot.id }}</a> <span class="tag">{{ snapshot.status }}</span> {{ snapshot.source_name or "JSON list" }}
+    {% set counts = snapshot_counts.get(snapshot.id) %}
+    <br><span class="muted">{{ counts.accepted }} accepted · {{ counts.duplicate }} duplicates · {{ counts.rejected }} rejected</span>
     {% if snapshot.source_url %}<br><a class="muted" href="{{ snapshot.source_url }}" target="_blank">{{ snapshot.source_url }}</a>{% endif %}
     {% set provenance = snapshot_provenance.get(snapshot.id) %}
     {% if provenance %}<br><span class="muted">{{ snapshot.adapter }} · {% if provenance.configured_url %}configured: {{ provenance.configured_url }} · {% endif %}fetched: {{ provenance.fetched_at }}</span>{% endif %}

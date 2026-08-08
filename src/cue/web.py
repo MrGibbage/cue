@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from collections.abc import Iterable
 from datetime import UTC, date, datetime
 from typing import Annotated
 
@@ -169,6 +170,13 @@ def collection_page(collection_id: int, request: Request) -> HTMLResponse:
             for snapshot in snapshots
             if snapshot.adapter != "json"
         }
+        snapshot_rows = list(
+            session.scalars(select(SourceRow).where(SourceRow.snapshot_id.in_([snapshot.id for snapshot in snapshots])))
+        )
+        snapshot_counts = {
+            snapshot.id: preview_counts(row for row in snapshot_rows if row.snapshot_id == snapshot.id)
+            for snapshot in snapshots
+        }
         latest = next((snapshot for snapshot in snapshots if snapshot.status == "approved"), None)
         items: list[dict[str, object]] = []
         if latest:
@@ -203,6 +211,7 @@ def collection_page(collection_id: int, request: Request) -> HTMLResponse:
             user=user,
             collection=collection,
             snapshots=snapshots,
+            snapshot_counts=snapshot_counts,
             snapshot_provenance=snapshot_provenance,
             latest=latest,
             items=items,
@@ -231,6 +240,7 @@ def snapshot_page(snapshot_id: int, request: Request) -> HTMLResponse:
             snapshot=snapshot,
             document=json.loads(snapshot.raw_document_json),
             rows=rows,
+            counts=preview_counts(rows),
         )
 
 
@@ -303,11 +313,12 @@ def json_preview_form(
             raise HTTPException(status_code=404, detail="Collection not found")
         try:
             payload = json.loads(document)
+            preview = parse_document(payload)
             snapshot = create_json_preview(
-                session, collection=collection, owner=user, document=payload, preview=parse_document(payload)
+                session, collection=collection, owner=user, document=payload, preview=preview
             )
             session.commit()
-            request.session["flash"] = ("success", f"Created preview #{snapshot.id}.")
+            request.session["flash"] = ("success", preview_created_message(snapshot.id, preview.rows))
         except (ValueError, json.JSONDecodeError) as exc:
             request.session["flash"] = ("error", f"JSON was not accepted: {exc}")
     return redirect(f"/collections/{collection_id}")
@@ -329,11 +340,15 @@ async def json_upload_preview_form(
             if not file.filename or not file.filename.lower().endswith(".json"):
                 raise ValueError("Upload a .json file")
             payload = parse_uploaded_document(await file.read())
+            preview = parse_document(payload)
             snapshot = create_json_preview(
-                session, collection=collection, owner=user, document=payload, preview=parse_document(payload)
+                session, collection=collection, owner=user, document=payload, preview=preview
             )
             session.commit()
-            request.session["flash"] = ("success", f"Created preview #{snapshot.id} from {file.filename}.")
+            request.session["flash"] = (
+                "success",
+                f"{preview_created_message(snapshot.id, preview.rows)} Uploaded from {file.filename}.",
+            )
         except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
             request.session["flash"] = ("error", f"JSON was not accepted: {exc}")
     return redirect(f"/collections/{collection_id}")
@@ -411,6 +426,20 @@ def collection_recipe(session: Session, collection_id: int) -> dict[str, object]
         .order_by(CollectionVersion.version.desc())
     )
     return json.loads(version.recipe_json) if version is not None else {}
+
+
+def preview_counts(rows: Iterable[object]) -> dict[str, int]:
+    states = ("accepted", "duplicate", "rejected")
+    rows = list(rows)
+    return {state: sum(getattr(row, "status", None) == state for row in rows) for state in states}
+
+
+def preview_created_message(snapshot_id: int, rows: Iterable[object]) -> str:
+    counts = preview_counts(rows)
+    return (
+        f"Created preview #{snapshot_id}: {counts['accepted']} accepted, "
+        f"{counts['duplicate']} duplicates, {counts['rejected']} rejected."
+    )
 
 
 @router.post("/snapshots/{snapshot_id}/approve")
