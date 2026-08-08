@@ -72,4 +72,5 @@ In a collection page, expand **Ask an AI to make a Cue song list** and use
 **Copy instructions**. It copies an instruction and schema that asks the model
 to return JSON only. Review generated JSON in Cue just as you would any other
 source—an AI-generated list is still only a proposed list, never an automatic
-acquisition instruction.
+acquisition instruction. Cue falls back to selecting the text for manual copy
+when browser clipboard access is unavailable.

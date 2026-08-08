@@ -45,7 +45,7 @@
     {"artists": ["Another artist", "Featured artist"], "title": "Another song", "rank": 2}
   ]
 }</textarea>
-  <br><br><button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('llm-json-instructions').value).then(() => this.textContent = 'Copied')">Copy instructions</button>
+  <br><br><button type="button" class="secondary" onclick="copyTextFrom('llm-json-instructions', this)">Copy instructions</button>
 </details>
 
 <div class="panel" style="margin-top:1rem">
