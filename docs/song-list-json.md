@@ -5,6 +5,10 @@ then decide whether to queue matching and acquisition. Paste JSON into a
 collection, upload a UTF-8 `.json` file, or send the same shape to the API.
 Every intake path accepts documents up to 2 MiB.
 
+Tools that support JSON Schema can use Cue's machine-readable schema at
+`/api/v1/song-list-schema`; it describes a fully valid list. Cue still shows
+per-row preview errors instead of discarding an otherwise useful mixed list.
+
 ## Recommended document
 
 ```json

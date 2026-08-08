@@ -33,6 +33,7 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
         assert "Copy instructions" in page.text
         assert "copyTextFrom" in page.text
         assert "Select and copy" in page.text
+        assert "/api/v1/song-list-schema" in page.text
         preview = client.post(
             "/collections/1/json-previews",
             data={

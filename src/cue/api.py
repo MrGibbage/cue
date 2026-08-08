@@ -28,7 +28,7 @@ from cue.auth import (
 )
 from cue.config import Settings, get_settings
 from cue.db import create_db_engine, database_ready, run_migrations
-from cue.discovery import apply_discovery_recipe, parse_document, parse_uploaded_document
+from cue.discovery import apply_discovery_recipe, parse_document, parse_uploaded_document, song_list_json_schema
 from cue.discovery_providers import fetch_billboard_hot_100, fetch_xmplaylist_recent
 from cue.logging import configure_logging
 from cue.models import (
@@ -144,6 +144,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def readyz(request: Request) -> dict[str, str]:
         database_ready(request.app.state.engine)
         return {"status": "ready"}
+
+    @app.get("/api/v1/song-list-schema")
+    def get_song_list_schema() -> dict[str, object]:
+        return song_list_json_schema()
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:

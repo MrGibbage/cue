@@ -18,6 +18,41 @@ MIN_SQLITE_INTEGER = -(2**63)
 MAX_SQLITE_INTEGER = 2**63 - 1
 
 
+def song_list_json_schema() -> dict[str, Any]:
+    """Return the portable schema for a valid Cue song-list document."""
+    item = {
+        "type": "object",
+        "required": ["artists", "title"],
+        "properties": {
+            "artists": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": MAX_ARTISTS_PER_ITEM,
+                "items": {"type": "string", "minLength": 1, "maxLength": MAX_ARTIST_CHARS},
+            },
+            "title": {"type": "string", "minLength": 1, "maxLength": MAX_TITLE_CHARS},
+            "rank": {"type": "integer", "minimum": MIN_SQLITE_INTEGER, "maximum": MAX_SQLITE_INTEGER},
+        },
+    }
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Cue song list",
+        "description": "A list of desired recordings for Cue preview and explicit approval.",
+        "oneOf": [
+            {"type": "array", "items": item},
+            {
+                "type": "object",
+                "required": ["items"],
+                "properties": {
+                    "source": {"type": "string", "maxLength": MAX_SOURCE_NAME_CHARS},
+                    "source_url": {"type": "string", "maxLength": MAX_SOURCE_URL_CHARS},
+                    "items": {"type": "array", "items": item},
+                },
+            },
+        ],
+    }
+
+
 def normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value).casefold()
     normalized = "".join(char for char in normalized if not unicodedata.combining(char))

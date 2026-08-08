@@ -34,7 +34,7 @@
 
 <details class="panel" style="margin-top:1rem">
   <summary><strong>Ask an AI to make a Cue song list</strong></summary>
-  <p>Copy this entire instruction into your prompt. Ask for any theme—party, decade, one-hit wonders, hair bands, space songs, or anything else.</p>
+  <p>Copy this entire instruction into your prompt. Ask for any theme—party, decade, one-hit wonders, hair bands, space songs, or anything else. <a href="/api/v1/song-list-schema" target="_blank" rel="noopener noreferrer">Open JSON Schema</a>.</p>
   <textarea id="llm-json-instructions" readonly aria-label="Instructions to copy for an AI song-list prompt">Instructions to the LLM: Generate a song list for my requested theme. After generating the song list, return ONLY valid JSON in this exact Cue format. Use a non-empty artists array and a non-empty title for every item. rank is optional; when present, use integers in the desired playlist order. Do not include Markdown fences or commentary.
 
 {
