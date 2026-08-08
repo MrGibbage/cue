@@ -63,6 +63,8 @@ An array is also valid when no document-level source metadata is needed:
 - If pasted JSON cannot be parsed, Cue keeps the pasted draft on the error
   page so it can be corrected and resubmitted.
 - Cue retains raw input and preview rows as an immutable source snapshot.
+- Open a snapshot and choose **Download immutable source JSON** to reuse its
+  original document or keep it with the collection's records.
 - A preview does not create matching or download jobs. Use **Approve & queue**
   as a distinct action after reviewing it.
 

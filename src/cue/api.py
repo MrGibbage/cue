@@ -380,6 +380,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rows = list(session.scalars(select(SourceRow).where(SourceRow.snapshot_id == snapshot.id)))
             return snapshot_summary(snapshot, rows)
 
+    @app.get("/api/v1/source-snapshots/{snapshot_id}/document")
+    def download_snapshot_document(
+        snapshot_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(authenticate)],
+    ) -> Response:
+        require_scope(principal, "collections:read")
+        with database_session(request) as session:
+            snapshot = session.get(SourceSnapshot, snapshot_id)
+            if snapshot is None or session.get(Collection, snapshot.collection_id).owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source snapshot not found")
+            return Response(
+                content=snapshot.raw_document_json,
+                media_type="application/json",
+                headers={"Content-Disposition": f'attachment; filename="cue-source-snapshot-{snapshot.id}.json"'},
+            )
+
     @app.get("/api/v1/jobs")
     def list_jobs(
         request: Request,

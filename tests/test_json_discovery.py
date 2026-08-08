@@ -48,6 +48,11 @@ def test_json_preview_and_approval(tmp_path):
         snapshot = client.get(f"/api/v1/source-snapshots/{snapshot_id}")
         assert snapshot.status_code == 200
         assert snapshot.json()["status"] == "approved"
+        downloaded = client.get(f"/api/v1/source-snapshots/{snapshot_id}/document", headers=headers)
+        assert downloaded.status_code == 200
+        assert downloaded.headers["content-type"] == "application/json"
+        assert downloaded.headers["content-disposition"] == 'attachment; filename="cue-source-snapshot-1.json"'
+        assert downloaded.json()["source"] == "External list"
 
 
 def test_json_upload_preview(tmp_path):

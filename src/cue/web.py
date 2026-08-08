@@ -245,6 +245,20 @@ def snapshot_page(snapshot_id: int, request: Request) -> HTMLResponse:
         )
 
 
+@router.get("/snapshots/{snapshot_id}/document.json")
+def download_snapshot_document(snapshot_id: int, request: Request) -> Response:
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        snapshot = session.get(SourceSnapshot, snapshot_id)
+        if snapshot is None or session.get(Collection, snapshot.collection_id).owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        return Response(
+            content=snapshot.raw_document_json,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="cue-source-snapshot-{snapshot.id}.json"'},
+        )
+
+
 @router.post("/collections/{collection_id}/exports")
 def playlist_export_preview_form(
     collection_id: int, request: Request, _: Annotated[Principal, Depends(require_csrf)]

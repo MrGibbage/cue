@@ -53,6 +53,10 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
         snapshot_page = client.get("/snapshots/1").text
         assert "Source #" in snapshot_page
         assert ">2</td>" in snapshot_page
+        assert "Download immutable source JSON" in snapshot_page
+        downloaded = client.get("/snapshots/1/document.json")
+        assert downloaded.headers["content-disposition"] == 'attachment; filename="cue-source-snapshot-1.json"'
+        assert downloaded.json()["source"] == "External list"
         invalid_json = client.post(
             "/collections/1/json-previews",
             data={"csrf_token": _csrf(client), "document": '[{"artists":["Rush"],"title":"Tom Sawyer"'},
