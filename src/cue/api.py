@@ -454,29 +454,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_library_assets(
         request: Request,
         principal: Annotated[Principal, Depends(authenticate)],
-    ) -> list[dict[str, object]]:
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=MAX_LIBRARY_PAGE_SIZE)] = DEFAULT_LIBRARY_PAGE_SIZE,
+    ) -> dict[str, object]:
         require_scope(principal, "collections:read")
         from cue.models import PublishedAsset, Recording
 
         with database_session(request) as session:
+            total_rows = session.scalar(select(func.count()).select_from(PublishedAsset)) or 0
             rows = session.execute(
                 select(PublishedAsset, Recording)
                 .join(Recording, PublishedAsset.recording_id == Recording.id)
                 .order_by(PublishedAsset.relative_path)
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             ).all()
-            return [
-                {
-                    "id": asset.id,
-                    "recording_id": recording.id,
-                    "artists": json.loads(recording.artists_json),
-                    "title": recording.title,
-                    "relative_path": asset.relative_path,
-                    "container": asset.container,
-                    "byte_size": asset.byte_size,
-                    "source": "download" if asset.candidate_asset_id else "library_import",
-                }
-                for asset, recording in rows
-            ]
+            return {
+                "total_rows": total_rows,
+                "page": page,
+                "page_size": page_size,
+                "rows": [
+                    {
+                        "id": asset.id,
+                        "recording_id": recording.id,
+                        "artists": json.loads(recording.artists_json),
+                        "title": recording.title,
+                        "relative_path": asset.relative_path,
+                        "container": asset.container,
+                        "byte_size": asset.byte_size,
+                        "source": "download" if asset.candidate_asset_id else "library_import",
+                    }
+                    for asset, recording in rows
+                ],
+            }
 
     @app.post("/api/v1/collections/{collection_id}/playlist-export-previews", status_code=status.HTTP_201_CREATED)
     def post_playlist_export_preview(
