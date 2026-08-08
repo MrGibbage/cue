@@ -272,6 +272,8 @@ def approve_snapshot(session: Session, snapshot: SourceSnapshot, owner: User) ->
             .order_by(SourceRow.supplied_rank.is_(None), SourceRow.supplied_rank, SourceRow.source_position)
         )
     )
+    if not rows:
+        raise ValueError("A preview needs at least one accepted song before it can be approved")
     for ordinal, row in enumerate(rows, start=1):
         recording = session.scalar(select(Recording).where(Recording.canonical_key == row.canonical_key))
         if recording is None:

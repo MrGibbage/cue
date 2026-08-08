@@ -57,7 +57,7 @@
     {% if snapshot.source_url %}<br><a class="muted" href="{{ snapshot.source_url }}" target="_blank">{{ snapshot.source_url }}</a>{% endif %}
     {% set provenance = snapshot_provenance.get(snapshot.id) %}
     {% if provenance %}<br><span class="muted">{{ snapshot.adapter }} · {% if provenance.configured_url %}configured: {{ provenance.configured_url }} · {% endif %}fetched: {{ provenance.fetched_at }}</span>{% endif %}
-    {% if snapshot.status == "previewed" %}<form class="inline" method="post" action="/snapshots/{{ snapshot.id }}/approve"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Approve & queue</button></form>{% endif %}
+    {% if snapshot.status == "previewed" and counts.accepted %}<form class="inline" method="post" action="/snapshots/{{ snapshot.id }}/approve"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Approve & queue</button></form>{% elif snapshot.status == "previewed" %}<span class="review">Fix rejected rows or create a new list before approval.</span>{% endif %}
   </p>
   {% else %}<p class="muted">Paste, upload, or fetch a source to begin.</p>{% endfor %}
 </div>

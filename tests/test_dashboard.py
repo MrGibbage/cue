@@ -47,6 +47,13 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
             follow_redirects=True,
         )
         assert "Created preview #2: 1 accepted, 0 duplicates, 0 rejected. Uploaded from party.json." in upload.text
+        invalid_preview = client.post(
+            "/collections/1/json-previews",
+            data={"csrf_token": _csrf(client), "document": '[{"artists":[],"title":"Missing artist"}]'},
+            follow_redirects=True,
+        )
+        assert "Fix rejected rows or create a new list before approval." in invalid_preview.text
+        assert 'action="/snapshots/3/approve"' not in invalid_preview.text
         saved = client.post(
             "/settings",
             data={"csrf_token": _csrf(client), "default_download_batch_size": "7"},
