@@ -27,6 +27,9 @@ The detailed execution plan is [implementation-plan.md](implementation-plan.md).
   adapter preserve immutable raw captures and use normal preview/approval.
   Provider recipes support artist/title filtering, rank ordering, and limits;
   xmplaylist follows history pages through the requested lookback window.
+- 2026-08-08: List-first intake hardening completed: paste, upload, and API
+  JSON share a bounded document limit, persist preview outcomes, and cannot
+  approve a list with no accepted songs.
 
 ## 1. Product decisions and acceptance specification
 
@@ -56,11 +59,10 @@ The detailed execution plan is [implementation-plan.md](implementation-plan.md).
 
 ## 4. Discovery and preview workflow
 
-- Implement CSV/JSON imports first.
-- Add xmplaylist with immutable source snapshots and recipe-based filtering and
-  ranking.
+- Make user-supplied JSON song lists the primary discovery contract.
+- Add optional convenience adapters behind the same immutable snapshot,
+  preview, and explicit-approval boundary.
 - Build the preview -> approval -> durable-work lifecycle.
-- Perform the Billboard feasibility assessment and formally include or defer it.
 
 ## 5. Acquisition worker
 
@@ -200,6 +202,20 @@ The full proposal and acceptance criteria are in
 - MVP success includes importing an existing library, creating a new collection
   from an approved source, reviewing uncertain matches, safely publishing to
   Plex and M3U, and rerunning without unintended duplicates.
+
+### List-first discovery direction — 2026-08-08
+
+- Cue is for creating a themed, inspectable music-video collection from a song
+  list the user brings. The list may come from personal research, a spreadsheet,
+  an external AI, or any other source that can produce Cue JSON.
+- The structured JSON import and preview/approval lifecycle are the core
+  product path and should remain robust independently of any native source.
+- The user-configured Billboard-compatible adapter and xmplaylist adapter are
+  optional conveniences. They are not required inputs, do not define Cue's
+  product scope, and must never bypass the normal immutable-snapshot review.
+- Cue does not generate themed lists internally. The dashboard supplies a
+  copyable JSON-only instruction for an external LLM; users remain responsible
+  for reviewing the proposed list before approving it.
 
 ### JSON ingestion and LLM boundary — 2026-08-04
 
