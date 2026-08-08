@@ -9,6 +9,13 @@ from typing import Any
 MAX_JSON_DOCUMENT_BYTES = 2 * 1024 * 1024
 # Kept as a public alias for callers that describe the limit in upload terms.
 MAX_JSON_UPLOAD_BYTES = MAX_JSON_DOCUMENT_BYTES
+MAX_SOURCE_NAME_CHARS = 255
+MAX_SOURCE_URL_CHARS = 2048
+MAX_ARTISTS_PER_ITEM = 16
+MAX_ARTIST_CHARS = 255
+MAX_TITLE_CHARS = 512
+MIN_SQLITE_INTEGER = -(2**63)
+MAX_SQLITE_INTEGER = 2**63 - 1
 
 
 def normalize_text(value: str) -> str:
@@ -115,8 +122,18 @@ def parse_document(document: Any) -> PreviewDocument:
         items = document
     elif isinstance(document, dict):
         items = document.get("items")
-        source_name = document.get("source") if isinstance(document.get("source"), str) else None
-        source_url = document.get("source_url") if isinstance(document.get("source_url"), str) else None
+        source_name = document.get("source")
+        source_url = document.get("source_url")
+        if source_name is not None and (
+            not isinstance(source_name, str) or len(source_name.strip()) > MAX_SOURCE_NAME_CHARS
+        ):
+            raise ValueError(f"source must be a string of at most {MAX_SOURCE_NAME_CHARS} characters when supplied")
+        if source_url is not None and (
+            not isinstance(source_url, str) or len(source_url.strip()) > MAX_SOURCE_URL_CHARS
+        ):
+            raise ValueError(f"source_url must be a string of at most {MAX_SOURCE_URL_CHARS} characters when supplied")
+        source_name = source_name.strip() or None if source_name is not None else None
+        source_url = source_url.strip() or None if source_url is not None else None
     else:
         raise ValueError("JSON document must be an array or an object containing an items array")
     if not isinstance(items, list):
@@ -137,12 +154,22 @@ def parse_document(document: Any) -> PreviewDocument:
             raw_rank = raw.get("rank")
             if not isinstance(raw_artists, list) or not raw_artists:
                 error = "artists must be a non-empty array"
+            elif len(raw_artists) > MAX_ARTISTS_PER_ITEM:
+                error = f"artists may contain at most {MAX_ARTISTS_PER_ITEM} entries"
             elif not all(isinstance(artist, str) and artist.strip() for artist in raw_artists):
                 error = "artists must contain only non-empty strings"
+            elif any(len(artist.strip()) > MAX_ARTIST_CHARS for artist in raw_artists):
+                error = f"each artist must be at most {MAX_ARTIST_CHARS} characters"
             elif not isinstance(raw_title, str) or not raw_title.strip():
                 error = "title must be a non-empty string"
-            elif raw_rank is not None and (not isinstance(raw_rank, int) or isinstance(raw_rank, bool)):
-                error = "rank must be an integer when supplied"
+            elif len(raw_title.strip()) > MAX_TITLE_CHARS:
+                error = f"title must be at most {MAX_TITLE_CHARS} characters"
+            elif raw_rank is not None and (
+                not isinstance(raw_rank, int)
+                or isinstance(raw_rank, bool)
+                or not MIN_SQLITE_INTEGER <= raw_rank <= MAX_SQLITE_INTEGER
+            ):
+                error = "rank must be a SQLite-compatible integer when supplied"
             else:
                 artists = [artist.strip() for artist in raw_artists]
                 title = raw_title.strip()

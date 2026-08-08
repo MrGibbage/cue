@@ -41,15 +41,17 @@ An array is also valid when no document-level source metadata is needed:
 
 - `artists`: a non-empty array of non-empty strings. Keep featured performers
   as separate entries when useful, such as `["Artist", "Featured artist"]`.
-- `title`: a non-empty string.
+  Each item may have up to 16 artist entries, each up to 255 characters.
+- `title`: a non-empty string, up to 512 characters.
 
 ## Optional fields
 
-- `rank`: integer ordering. Cue orders ranked items first by ascending rank;
+- `rank`: SQLite-compatible integer ordering. Cue orders ranked items first by ascending rank;
   unranked items retain source order after them. The immutable snapshot displays
   both source position and supplied rank for review.
 - `source`, `source_url`: document-level provenance. HTTP(S) `source_url`
   values are displayed as links; any other value is retained as plain text.
+  `source` is limited to 255 characters and `source_url` to 2,048.
 - `notes`, `year`, `album`, `source_id`, and other source-specific fields:
   preserved as raw row provenance even when Cue does not use them for matching.
 
