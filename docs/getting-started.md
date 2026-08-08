@@ -53,7 +53,8 @@ preview is safe.
 
      `rank` is optional; without it, array order becomes collection order.
      JSON can also be an object with `source`, `source_url`, and `items` to
-     preserve your own source metadata.
+     preserve your own source metadata. See the complete
+     [song-list JSON reference](song-list-json.md).
    - Use **Billboard Hot 100** only with a URL or base URL you configure for
      your personal GitHub copy of compatible JSON data. Cue does not bundle or
      license a Billboard source. Entering a base fetches `recent.json`; adding

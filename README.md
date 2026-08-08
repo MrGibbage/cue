@@ -28,7 +28,8 @@ without requiring manual API calls. Native discovery includes a
 user-configured Billboard-compatible GitHub JSON source and xmplaylist Alt
 Nation recent plays; the optional MVG importer remains deferred.
 
-Start with the [getting-started guide](docs/getting-started.md). Then read [the product design](docs/product-design.md), [MVP plan](docs/mvp.md),
+Start with the [getting-started guide](docs/getting-started.md) and
+[song-list JSON reference](docs/song-list-json.md). Then read [the product design](docs/product-design.md), [MVP plan](docs/mvp.md),
 [migration plan](docs/migration-from-mvg.md), [technical design](docs/technical-design.md),
 and [branding notes](docs/branding.md). The runnable Compose stack is in
 `compose.yml`; `compose.example.yml` remains the original deployment/mount

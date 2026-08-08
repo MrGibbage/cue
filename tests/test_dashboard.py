@@ -29,6 +29,8 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
         assert collection.status_code == 303
         page = client.get(collection.headers["location"])
         assert "Dashboard Rock" in page.text
+        assert "Instructions to the LLM: Generate a song list" in page.text
+        assert "Copy instructions" in page.text
         preview = client.post(
             "/collections/1/json-previews",
             data={"csrf_token": _csrf(client), "document": '[{"artists":["Rush"],"title":"Tom Sawyer"}]'},
@@ -36,6 +38,13 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
         )
         assert preview.status_code == 303
         assert "Created preview #1" in client.get("/collections/1").text
+        upload = client.post(
+            "/collections/1/json-upload-previews",
+            data={"csrf_token": _csrf(client)},
+            files={"file": ("party.json", b'[{"artists":["Prince"],"title":"1999"}]', "application/json")},
+            follow_redirects=True,
+        )
+        assert "Created preview #2 from party.json" in upload.text
         saved = client.post(
             "/settings",
             data={"csrf_token": _csrf(client), "default_download_batch_size": "7"},

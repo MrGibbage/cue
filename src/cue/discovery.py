@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Any
+
+MAX_JSON_UPLOAD_BYTES = 2 * 1024 * 1024
 
 
 def normalize_text(value: str) -> str:
@@ -14,6 +17,16 @@ def normalize_text(value: str) -> str:
 
 def canonical_key(artists: list[str], title: str) -> str:
     return f"{' | '.join(normalize_text(artist) for artist in artists)} :: {normalize_text(title)}"
+
+
+def parse_uploaded_document(data: bytes) -> dict[str, Any] | list[Any]:
+    """Decode a bounded UTF-8 JSON list document uploaded through the UI/API."""
+    if len(data) > MAX_JSON_UPLOAD_BYTES:
+        raise ValueError(f"JSON upload exceeds the {MAX_JSON_UPLOAD_BYTES // (1024 * 1024)} MiB limit")
+    document = json.loads(data.decode("utf-8"))
+    if not isinstance(document, (dict, list)):
+        raise ValueError("JSON document must be an array or an object containing an items array")
+    return document
 
 
 @dataclass(frozen=True)

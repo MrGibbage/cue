@@ -1,6 +1,68 @@
 {% extends "base.html" %}
 {% block content %}
-<a href="/">← Dashboard</a><h1>{{ collection.name }}</h1>
-<div class="grid"><form method="post" action="/collections/{{ collection.id }}/json-previews"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h2>Paste song-list JSON</h2><textarea name="document" placeholder='[{"artists":["Rush"],"title":"Tom Sawyer"}]' required></textarea><br><br><button>Preview list</button></form><form method="post" action="/collections/{{ collection.id }}/billboard-hot-100-previews"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h2>Billboard Hot 100</h2><p class="muted">User-configured personal GitHub data source; not a bundled Cue provider.</p><label>Raw GitHub URL or base<input name="configured_source" type="url" placeholder="https://raw.githubusercontent.com/..." required></label><br><label>Chart date (optional)<input name="chart_date" type="date"></label><br><br><button>Fetch and preview</button></form><form method="post" action="/collections/{{ collection.id }}/xmplaylist-previews"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h2>Alt Nation recent plays</h2><p class="muted">Captures the xmplaylist response before any work is queued.</p><label>Lookback hours<input name="window_hours" type="number" min="1" max="720" value="24"></label><br><br><button>Fetch and preview</button></form><div class="panel"><h2>Snapshots</h2>{% for snapshot in snapshots %}<p><a href="/snapshots/{{ snapshot.id }}">#{{ snapshot.id }}</a> <span class="tag">{{ snapshot.status }}</span> {{ snapshot.source_name or "JSON list" }}{% if snapshot.source_url %}<br><a class="muted" href="{{ snapshot.source_url }}" target="_blank">{{ snapshot.source_url }}</a>{% endif %}{% set provenance = snapshot_provenance.get(snapshot.id) %}{% if provenance %}<br><span class="muted">{{ snapshot.adapter }} · {% if provenance.configured_url %}configured: {{ provenance.configured_url }} · {% endif %}fetched: {{ provenance.fetched_at }}</span>{% endif %} {% if snapshot.status == "previewed" %}<form class="inline" method="post" action="/snapshots/{{ snapshot.id }}/approve"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Approve & queue</button></form>{% endif %}</p>{% else %}<p class="muted">Paste a list or fetch a provider source to begin.</p>{% endfor %}</div></div>
-{% if latest %}<form style="margin:1rem 0" method="post" action="/collections/{{ collection.id }}/exports"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Preview M3U8 export</button></form><h2>Current resolved list</h2><table><tr><th>#</th><th>Recording</th><th>Status / choices</th></tr>{% for item in items %}<tr><td>{{ item.entry.ordinal }}</td><td>{{ item.recording.artists_json }} — {{ item.recording.title }}</td><td><span class="tag {{ item.resolution.status if item.resolution else '' }}">{{ item.resolution.status if item.resolution else 'unresolved' }}</span>{% if item.resolution and item.resolution.status == 'review' %}{% for candidate in item.candidates %}<div style="margin-top:.5rem"><a href="{{ candidate.url }}" target="_blank">{{ candidate.title }}</a> <span class="muted">{{ candidate.score }}</span><form class="inline" method="post" action="/candidates/{{ candidate.id }}/select"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entry_id" value="{{ item.entry.id }}"><button>Select</button></form></div>{% endfor %}{% endif %}</td></tr>{% endfor %}</table>{% endif %}
+<a href="/">← Dashboard</a>
+<h1>{{ collection.name }}</h1>
+
+<div class="grid">
+  <form method="post" action="/collections/{{ collection.id }}/json-previews">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Paste song-list JSON</h2>
+    <textarea name="document" placeholder='[{"artists":["Rush"],"title":"Tom Sawyer"}]' required></textarea>
+    <br><br><button>Preview list</button>
+  </form>
+  <form method="post" action="/collections/{{ collection.id }}/json-upload-previews" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Upload song-list JSON</h2>
+    <p class="muted">Upload a UTF-8 <code>.json</code> file up to 2 MiB. Nothing queues until approval.</p>
+    <input name="file" type="file" accept="application/json,.json" required>
+    <br><br><button>Upload and preview</button>
+  </form>
+  <form method="post" action="/collections/{{ collection.id }}/billboard-hot-100-previews">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Billboard Hot 100</h2>
+    <p class="muted">User-configured personal GitHub data source; not a bundled Cue provider.</p>
+    <label>Raw GitHub URL or base<input name="configured_source" type="url" placeholder="https://raw.githubusercontent.com/..." required></label>
+    <br><label>Chart date (optional)<input name="chart_date" type="date"></label><br><br><button>Fetch and preview</button>
+  </form>
+  <form method="post" action="/collections/{{ collection.id }}/xmplaylist-previews">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Alt Nation recent plays</h2>
+    <p class="muted">Captures the xmplaylist response before any work is queued.</p>
+    <label>Lookback hours<input name="window_hours" type="number" min="1" max="720" value="24"></label><br><br><button>Fetch and preview</button>
+  </form>
+</div>
+
+<details class="panel" style="margin-top:1rem">
+  <summary><strong>Ask an AI to make a Cue song list</strong></summary>
+  <p>Copy this entire instruction into your prompt. Ask for any theme—party, decade, one-hit wonders, hair bands, space songs, or anything else.</p>
+  <textarea id="llm-json-instructions" readonly aria-label="Instructions to copy for an AI song-list prompt">Instructions to the LLM: Generate a song list for my requested theme. After generating the song list, return ONLY valid JSON in this exact Cue format. Use a non-empty artists array and a non-empty title for every item. rank is optional; when present, use integers in the desired playlist order. Do not include Markdown fences or commentary.
+
+{
+  "source": "Brief description of this list",
+  "source_url": "Optional source URL, if applicable",
+  "items": [
+    {"artists": ["Artist name"], "title": "Song title", "rank": 1},
+    {"artists": ["Another artist", "Featured artist"], "title": "Another song", "rank": 2}
+  ]
+}</textarea>
+  <br><br><button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('llm-json-instructions').value).then(() => this.textContent = 'Copied')">Copy instructions</button>
+</details>
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Snapshots</h2>
+  {% for snapshot in snapshots %}
+  <p><a href="/snapshots/{{ snapshot.id }}">#{{ snapshot.id }}</a> <span class="tag">{{ snapshot.status }}</span> {{ snapshot.source_name or "JSON list" }}
+    {% if snapshot.source_url %}<br><a class="muted" href="{{ snapshot.source_url }}" target="_blank">{{ snapshot.source_url }}</a>{% endif %}
+    {% set provenance = snapshot_provenance.get(snapshot.id) %}
+    {% if provenance %}<br><span class="muted">{{ snapshot.adapter }} · {% if provenance.configured_url %}configured: {{ provenance.configured_url }} · {% endif %}fetched: {{ provenance.fetched_at }}</span>{% endif %}
+    {% if snapshot.status == "previewed" %}<form class="inline" method="post" action="/snapshots/{{ snapshot.id }}/approve"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Approve & queue</button></form>{% endif %}
+  </p>
+  {% else %}<p class="muted">Paste, upload, or fetch a source to begin.</p>{% endfor %}
+</div>
+
+{% if latest %}
+<form style="margin:1rem 0" method="post" action="/collections/{{ collection.id }}/exports"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Preview M3U8 export</button></form>
+<h2>Current resolved list</h2>
+<table><tr><th>#</th><th>Recording</th><th>Status / choices</th></tr>{% for item in items %}<tr><td>{{ item.entry.ordinal }}</td><td>{{ item.recording.artists_json }} — {{ item.recording.title }}</td><td><span class="tag {{ item.resolution.status if item.resolution else '' }}">{{ item.resolution.status if item.resolution else 'unresolved' }}</span>{% if item.resolution and item.resolution.status == 'review' %}{% for candidate in item.candidates %}<div style="margin-top:.5rem"><a href="{{ candidate.url }}" target="_blank">{{ candidate.title }}</a> <span class="muted">{{ candidate.score }}</span><form class="inline" method="post" action="/candidates/{{ candidate.id }}/select"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entry_id" value="{{ item.entry.id }}"><button>Select</button></form></div>{% endfor %}{% endif %}</td></tr>{% endfor %}</table>
+{% endif %}
 {% endblock %}
