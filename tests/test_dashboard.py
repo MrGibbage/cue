@@ -33,13 +33,21 @@ def test_dashboard_login_collection_json_preview_and_settings(tmp_path):
         assert "Copy instructions" in page.text
         preview = client.post(
             "/collections/1/json-previews",
-            data={"csrf_token": _csrf(client), "document": '[{"artists":["Rush"],"title":"Tom Sawyer"}]'},
+            data={
+                "csrf_token": _csrf(client),
+                "document": (
+                    '{"source":"External list","source_url":"javascript:alert(1)",'
+                    '"items":[{"artists":["Rush"],"title":"Tom Sawyer"}]}'
+                ),
+            },
             follow_redirects=False,
         )
         assert preview.status_code == 303
         collection_page = client.get("/collections/1").text
         assert "Created preview #1: 1 accepted, 0 duplicates, 0 rejected." in collection_page
         assert "1 accepted · 0 duplicates · 0 rejected" in collection_page
+        assert "javascript:alert(1)" in collection_page
+        assert 'href="javascript:' not in collection_page
         upload = client.post(
             "/collections/1/json-upload-previews",
             data={"csrf_token": _csrf(client)},

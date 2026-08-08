@@ -47,7 +47,8 @@ An array is also valid when no document-level source metadata is needed:
 
 - `rank`: integer ordering. Cue orders ranked items first by ascending rank;
   unranked items retain source order after them.
-- `source`, `source_url`: document-level provenance.
+- `source`, `source_url`: document-level provenance. HTTP(S) `source_url`
+  values are displayed as links; any other value is retained as plain text.
 - `notes`, `year`, `album`, `source_id`, and other source-specific fields:
   preserved as raw row provenance even when Cue does not use them for matching.
 
