@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     port: int = Field(default=8080, ge=1, le=65535)
     log_level: str = "INFO"
     default_download_batch_size: int = Field(default=25, ge=1)
+    library_scan_batch_size: int = Field(default=250, ge=1, le=2000)
     apprise_url: HttpUrl | None = None
     session_secret: str = Field(min_length=32)
     bootstrap_admin_username: str | None = None

@@ -94,10 +94,10 @@ web-request workflow for a library with roughly 10,000 or more files.
   acceptable to the filesystem and SQLite.
 - The concern is HTTP request duration, memory use, response size, and reverse
   proxy/client timeouts, not file safety or SQLite row capacity.
-- Before presenting large-library import as production-hardened, move scans to
-  durable background jobs with progress, cancellation, and bounded write
-  batches.
-- Paginate import-preview rows and library search; APIs must return counts and
+- 2026-08-09: Large-library import hardening completed: scans are durable
+  background jobs with persisted progress, cancellation/failure visibility,
+  bounded write batches, and an approval gate at successful preview completion.
+- Import-preview rows and library search are paginated; APIs return counts and
   a page of rows rather than an unbounded full-library response.
 - Expose directory-level progress and configurable safety limits so an operator
   can understand and control a long scan.

@@ -1,11 +1,12 @@
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from cue.api import create_app
 from cue.config import Settings
 from cue.discovery import parse_document
 from cue.library import parse_library_filename
-from cue.models import CollectionEntry, CollectionResolution, PublishedAsset, Recording, User
+from cue.models import CollectionEntry, CollectionResolution, Job, LibraryImport, PublishedAsset, Recording, User
 from cue.services import approve_snapshot, create_collection, create_json_preview
 from cue.worker import process_job
 
@@ -52,10 +53,17 @@ def test_existing_library_preview_and_approval_are_safe_and_idempotent(tmp_path)
         preview = client.post("/api/v1/library-imports/previews", headers=headers, json={"source_name": "My library"})
 
         assert preview.status_code == 201
-        assert preview.json()["counts"] == {"accepted": 1, "already_imported": 0, "review": 1, "imported": 0}
+        assert preview.json()["status"] == "queued"
+        assert preview.json()["counts"] == {"accepted": 0, "already_imported": 0, "review": 0, "imported": 0}
         assert managed.read_bytes() == b"video"
         library_import_id = preview.json()["id"]
+        assert client.post(f"/api/v1/library-imports/{library_import_id}/approvals", headers=headers).status_code == 409
+        with Session(client.app.state.engine) as session:
+            job = session.scalar(select(Job).where(Job.kind == "scan_library_import"))
+            assert job is not None
+            process_job(session, job.id, settings)
         paged = client.get(f"/api/v1/library-imports/{library_import_id}?page_size=1", headers=headers)
+        assert paged.json()["status"] == "previewed"
         assert paged.json()["total_rows"] == 2
         assert paged.json()["counts"] == {"accepted": 1, "already_imported": 0, "review": 1, "imported": 0}
         assert len(paged.json()["rows"]) == 1
@@ -77,7 +85,41 @@ def test_existing_library_preview_and_approval_are_safe_and_idempotent(tmp_path)
 
         second_preview = client.post("/api/v1/library-imports/previews", headers=headers, json={})
         assert second_preview.status_code == 201
-        assert second_preview.json()["counts"]["already_imported"] == 1
+        with Session(client.app.state.engine) as session:
+            second_job = session.scalar(select(Job).where(Job.kind == "scan_library_import").order_by(Job.id.desc()))
+            assert second_job is not None
+            process_job(session, second_job.id, settings)
+        assert client.get(f"/api/v1/library-imports/{second_preview.json()['id']}", headers=headers).json()["counts"][
+            "already_imported"
+        ] == 1
+
+
+def test_library_import_scan_can_be_cancelled_before_worker_runs(tmp_path):
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    (media_root / "Artist - Title.mp4").write_bytes(b"video")
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'cue.sqlite3'}",
+        media_root=media_root,
+        session_secret="test-session-secret-that-is-long-enough",
+        bootstrap_admin_username="owner",
+        bootstrap_admin_password="correct-horse-battery-staple",
+    )
+    with TestClient(create_app(settings), base_url="https://testserver") as client:
+        login = client.post(
+            "/api/v1/auth/login", json={"username": "owner", "password": "correct-horse-battery-staple"}
+        )
+        headers = {"X-CSRF-Token": login.json()["csrf_token"]}
+        preview = client.post("/api/v1/library-imports/previews", headers=headers, json={})
+        library_import_id = preview.json()["id"]
+        cancelled = client.post(f"/api/v1/library-imports/{library_import_id}/cancellations", headers=headers)
+        assert cancelled.json()["status"] == "cancelled"
+        summary = client.get(f"/api/v1/library-imports/{library_import_id}", headers=headers).json()
+        assert summary["status"] == "cancelled"
+        assert summary["total_rows"] == 0
+        assert client.post(f"/api/v1/library-imports/{library_import_id}/approvals", headers=headers).status_code == 409
+        with Session(client.app.state.engine) as session:
+            assert session.get(LibraryImport, library_import_id).status == "cancelled"
 
 
 def test_collection_reuses_imported_recording_without_a_provider_search(session, tmp_path, monkeypatch):

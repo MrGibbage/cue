@@ -53,6 +53,7 @@ from cue.services import (
     approve_playlist_export,
     approve_snapshot,
     bootstrap_admin,
+    cancel_library_import_scan,
     create_collection,
     create_json_preview,
     create_library_import_preview,
@@ -429,7 +430,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             library_import = create_library_import_preview(
                 session,
                 owner=principal.user,
-                media_root=request.app.state.settings.media_root,
                 source_name=payload.source_name,
             )
             session.commit()
@@ -449,6 +449,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if library_import is None or library_import.owner_id != principal.user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Library import not found")
             return paginated_library_import_summary(session, library_import, page, page_size)
+
+    @app.post("/api/v1/library-imports/{library_import_id}/cancellations")
+    def post_library_import_cancellation(
+        library_import_id: int, request: Request, principal: Annotated[Principal, Depends(require_csrf)]
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        with database_session(request) as session:
+            library_import = session.get(LibraryImport, library_import_id)
+            if library_import is None or library_import.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Library import not found")
+            try:
+                cancel_library_import_scan(session, library_import, principal.user)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            session.commit()
+            return {"library_import_id": library_import.id, "status": library_import.status}
 
     @app.get("/api/v1/library/assets")
     def list_library_assets(
@@ -892,6 +909,12 @@ def library_import_summary(library_import: LibraryImport, rows: list[LibraryImpo
         "id": library_import.id,
         "source_name": library_import.source_name,
         "status": library_import.status,
+        "progress": {
+            "scanned_files": library_import.scanned_files,
+            "scanned_directories": library_import.scanned_directories,
+            "current_path": library_import.current_path,
+            "error": library_import.error,
+        },
         "counts": {state: sum(row.status == state for row in rows) for state in states},
         "rows": [
             {

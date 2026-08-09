@@ -36,16 +36,14 @@ mapping work.
 ### Large libraries
 
 Cue has no intended maximum number of managed videos, and a single flat
-directory with 10,000 videos is a valid library layout. The initial importer
-does not yet make that scale a reliable browser request, however: it currently
-scans synchronously, persists the full preview in one transaction, and returns
-all preview rows together. The scan remains read-only until approval, but a
-large request may be slow or hit a proxy/client timeout.
-
-Large-library hardening will move scanning into durable background jobs with
-progress and cancellation, use bounded database writes, and paginate both
-preview and library-search results. Until that work lands, import a very large
-library in smaller directory-scoped passes or use a staging/test subset first.
+directory with 10,000 videos is a valid library layout. Starting a scan creates
+a durable queued job and returns immediately. The worker scans read-only,
+stores rows in configurable bounded batches (`CUE_LIBRARY_SCAN_BATCH_SIZE`,
+default 250), and persists files/directories inspected plus the current path.
+The dashboard and API show queued, scanning, previewed, failed, or cancelled
+states; preview rows and library search are paginated. Approval is unavailable
+until a scan reaches `previewed`. Cancelling or failing a scan never imports or
+modifies media.
 
 ## Music Video Grabber import
 

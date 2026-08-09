@@ -35,6 +35,7 @@ from cue.services import (
     approve_library_import,
     approve_playlist_export,
     approve_snapshot,
+    cancel_library_import_scan,
     create_collection,
     create_json_preview,
     create_library_import_preview,
@@ -515,7 +516,10 @@ def library_page(
             return redirect("/login")
         imports = list(
             session.scalars(
-                select(LibraryImport).where(LibraryImport.owner_id == user.id).order_by(LibraryImport.id.desc())
+                select(LibraryImport)
+                .where(LibraryImport.owner_id == user.id)
+                .order_by(LibraryImport.id.desc())
+                .limit(100)
             )
         )
         needle = query.strip()
@@ -562,7 +566,7 @@ def library_preview_form(request: Request, _: Annotated[Principal, Depends(requi
     with Session(request.app.state.engine) as session:
         user = require_web_user(request, session)
         library_import = create_library_import_preview(
-            session, owner=user, media_root=request.app.state.settings.media_root
+            session, owner=user
         )
         library_import_id = library_import.id
         session.commit()
@@ -616,7 +620,27 @@ def approve_library_import_form(
         library_import = session.get(LibraryImport, library_import_id)
         if library_import is None or library_import.owner_id != user.id:
             raise HTTPException(status_code=404, detail="Library import not found")
-        approve_library_import(session, library_import, user, request.app.state.settings.media_root)
+        try:
+            approve_library_import(session, library_import, user, request.app.state.settings.media_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        session.commit()
+    return redirect(f"/library/imports/{library_import_id}")
+
+
+@router.post("/library/imports/{library_import_id}/cancel")
+def cancel_library_import_form(
+    library_import_id: int, request: Request, _: Annotated[Principal, Depends(require_csrf)]
+) -> RedirectResponse:
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        library_import = session.get(LibraryImport, library_import_id)
+        if library_import is None or library_import.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Library import not found")
+        try:
+            cancel_library_import_scan(session, library_import, user)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         session.commit()
     return redirect(f"/library/imports/{library_import_id}")
 

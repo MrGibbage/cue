@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from cue.auth import password_hash
 from cue.discovery import PreviewDocument
-from cue.library import scan_library
 from cue.models import (
     ApplicationSetting,
     AuditEvent,
@@ -19,6 +18,7 @@ from cue.models import (
     CollectionResolution,
     CollectionVersion,
     Job,
+    JobAttempt,
     LibraryImport,
     LibraryImportRow,
     PlaylistExport,
@@ -314,58 +314,71 @@ def approve_snapshot(session: Session, snapshot: SourceSnapshot, owner: User) ->
 
 
 def create_library_import_preview(
-    session: Session, *, owner: User, media_root: Path, source_name: str | None = None
+    session: Session, *, owner: User, source_name: str | None = None
 ) -> LibraryImport:
-    """Build a read-only, conservative import preview for the configured media root."""
-    library_import = LibraryImport(owner_id=owner.id, source_name=source_name.strip() if source_name else None)
+    """Create a durable, read-only library scan request."""
+    library_import = LibraryImport(
+        owner_id=owner.id, source_name=source_name.strip() if source_name else None, status="queued"
+    )
     session.add(library_import)
     session.flush()
-    managed_paths = set(session.scalars(select(PublishedAsset.relative_path)))
-    seen_keys: set[str] = set()
-    root = media_root.resolve()
-    for path, parsed in scan_library(root):
-        relative_path = path.relative_to(root).as_posix()
-        status = "accepted"
-        error = parsed.error
-        if relative_path in managed_paths:
-            status = "already_imported"
-            error = "This path is already managed by Cue"
-        elif error:
-            status = "review"
-        elif parsed.canonical_key in seen_keys:
-            status = "review"
-            error = "Another file in this preview has the same parsed recording; review alternate versions manually"
-        else:
-            seen_keys.add(parsed.canonical_key or "")
-        session.add(
-            LibraryImportRow(
-                library_import_id=library_import.id,
-                relative_path=relative_path,
-                byte_size=path.stat().st_size,
-                container=path.suffix.removeprefix(".").lower(),
-                artists_json=json.dumps(parsed.artists) if parsed.artists else None,
-                title=parsed.title,
-                descriptor=parsed.descriptor,
-                year=parsed.year,
-                canonical_key=parsed.canonical_key,
-                status=status,
-                error=error,
-            )
-        )
+    job = Job(
+        owner_id=owner.id,
+        kind="scan_library_import",
+        payload_json=json.dumps({"library_import_id": library_import.id}),
+        max_attempts=1,
+    )
+    session.add(job)
+    session.flush()
     write_audit(
         session,
         actor_id=owner.id,
-        action="library_import.previewed",
+        action="library_import.queued",
         entity_type="library_import",
         entity_id=library_import.id,
-        detail={"source_name": library_import.source_name},
+        detail={"source_name": library_import.source_name, "job_id": job.id},
     )
     return library_import
 
 
+def cancel_library_import_scan(session: Session, library_import: LibraryImport, owner: User) -> None:
+    if library_import.status not in {"queued", "scanning"}:
+        raise ValueError("Only queued or scanning library imports can be cancelled")
+    library_import.status = "cancelled"
+    library_import.cancelled_at = datetime.now(UTC).replace(tzinfo=None)
+    library_import.current_path = None
+    job = session.scalar(
+        select(Job)
+        .where(
+            Job.kind == "scan_library_import",
+            Job.payload_json.contains(f'"library_import_id": {library_import.id}'),
+        )
+        .order_by(Job.id.desc())
+        .limit(1)
+    )
+    if job is not None and job.status in {"queued", "running"}:
+        if job.status == "running":
+            attempt = session.scalar(
+                select(JobAttempt).where(
+                    JobAttempt.job_id == job.id, JobAttempt.attempt_number == job.attempt_count
+                )
+            )
+            if attempt is not None:
+                attempt.status = "cancelled"
+                attempt.finished_at = datetime.now(UTC).replace(tzinfo=None)
+        job.status, job.claimed_at, job.claimed_by = "cancelled", None, None
+    write_audit(
+        session,
+        actor_id=owner.id,
+        action="library_import.cancelled",
+        entity_type="library_import",
+        entity_id=library_import.id,
+    )
+
+
 def approve_library_import(session: Session, library_import: LibraryImport, owner: User, media_root: Path) -> int:
     if library_import.status != "previewed":
-        raise ValueError("Library import has already been approved")
+        raise ValueError("Library import scan must complete successfully before approval")
     root = media_root.resolve()
     rows = list(
         session.scalars(

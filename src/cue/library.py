@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,20 +53,22 @@ def parse_library_filename(filename: str) -> ParsedLibraryFile:
     return ParsedLibraryFile(artists, title, descriptor, year, None)
 
 
-def scan_library(media_root: Path) -> list[tuple[Path, ParsedLibraryFile]]:
-    """Return supported media files without following or exposing hidden paths."""
+def scan_library(media_root: Path) -> Iterator[tuple[Path, ParsedLibraryFile, int]]:
+    """Yield supported media files read-only, without traversing hidden paths or symlinks."""
     root = media_root.resolve()
     if not root.is_dir():
         raise ValueError("Configured media root does not exist or is not a directory")
-    results: list[tuple[Path, ParsedLibraryFile]] = []
-    for path in sorted(root.rglob("*")):
-        if path.is_symlink() or not path.is_file() or path.suffix.lower() not in SUPPORTED_CONTAINERS:
-            continue
-        relative = path.relative_to(root)
-        if any(part.startswith(".") for part in relative.parts):
-            continue
-        results.append((path, parse_library_filename(path.name)))
-    return results
+    directories = 0
+    for directory, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(name for name in dirnames if not name.startswith("."))
+        directories += 1
+        for filename in sorted(filenames):
+            if filename.startswith("."):
+                continue
+            path = Path(directory, filename)
+            if path.is_symlink() or path.suffix.lower() not in SUPPORTED_CONTAINERS:
+                continue
+            yield path, parse_library_filename(path.name), directories
 
 
 def safe_filename(recording: Recording, candidate: CandidateAsset, extension: str) -> str:

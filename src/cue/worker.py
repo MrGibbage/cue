@@ -14,12 +14,14 @@ from sqlalchemy.orm import Session
 from cue.backups import create_daily_backup
 from cue.config import Settings, get_settings
 from cue.db import create_db_engine, run_migrations
-from cue.library import publish_atomically, safe_filename
+from cue.library import publish_atomically, safe_filename, scan_library
 from cue.logging import configure_logging
 from cue.models import (
     CandidateAsset,
     CollectionEntry,
     CollectionResolution,
+    LibraryImport,
+    LibraryImportRow,
     PlaylistExport,
     PublishedAsset,
     Recording,
@@ -29,9 +31,125 @@ from cue.notifications import notify
 from cue.providers import download_youtube, search_youtube, validate_video
 from cue.publishers import write_export_artifacts
 from cue.queue import claim_next_job, finish_job
-from cue.services import decide_resolution, get_download_batch_size, queue_candidate_download, store_youtube_candidates
+from cue.services import (
+    decide_resolution,
+    get_download_batch_size,
+    queue_candidate_download,
+    store_youtube_candidates,
+    write_audit,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def scan_library_import(session: Session, job_id: int, library_import_id: int, settings: Settings) -> None:
+    """Persist a read-only scan in bounded transactions so long scans survive restarts."""
+    library_import = session.get(LibraryImport, library_import_id)
+    if library_import is None:
+        raise RuntimeError("Library import not found")
+    if library_import.status == "cancelled":
+        return
+    if library_import.status not in {"queued", "scanning"}:
+        raise RuntimeError("Library import is no longer awaiting a scan")
+    root = settings.media_root.resolve()
+    library_import.status = "scanning"
+    library_import.error = None
+    session.commit()
+
+    managed_paths = set(session.scalars(select(PublishedAsset.relative_path)))
+    existing_paths = set(
+        session.scalars(
+            select(LibraryImportRow.relative_path).where(LibraryImportRow.library_import_id == library_import_id)
+        )
+    )
+    seen_keys = set(
+        session.scalars(
+            select(LibraryImportRow.canonical_key).where(
+                LibraryImportRow.library_import_id == library_import_id, LibraryImportRow.status == "accepted"
+            )
+        )
+    )
+    batch: list[LibraryImportRow] = []
+    scanned_files = 0
+    scanned_directories = 0
+    current_path: str | None = None
+
+    def flush_batch() -> bool:
+        nonlocal batch
+        session.refresh(library_import)
+        if library_import.status == "cancelled":
+            session.commit()
+            return False
+        session.add_all(batch)
+        library_import.scanned_files = scanned_files
+        library_import.scanned_directories = scanned_directories
+        library_import.current_path = current_path
+        session.commit()
+        batch = []
+        return True
+
+    for path, parsed, directories in scan_library(root):
+        scanned_files += 1
+        scanned_directories = directories
+        relative_path = path.relative_to(root).as_posix()
+        current_path = relative_path
+        if relative_path in existing_paths:
+            continue
+        try:
+            byte_size = path.stat().st_size
+        except OSError:
+            continue
+        row_status = "accepted"
+        error = parsed.error
+        if relative_path in managed_paths:
+            row_status = "already_imported"
+            error = "This path is already managed by Cue"
+        elif error:
+            row_status = "review"
+        elif parsed.canonical_key in seen_keys:
+            row_status = "review"
+            error = "Another file in this preview has the same parsed recording; review alternate versions manually"
+        else:
+            seen_keys.add(parsed.canonical_key)
+        batch.append(
+            LibraryImportRow(
+                library_import_id=library_import_id,
+                relative_path=relative_path,
+                byte_size=byte_size,
+                container=path.suffix.removeprefix(".").lower(),
+                artists_json=json.dumps(parsed.artists) if parsed.artists else None,
+                title=parsed.title,
+                descriptor=parsed.descriptor,
+                year=parsed.year,
+                canonical_key=parsed.canonical_key,
+                status=row_status,
+                error=error,
+            )
+        )
+        if scanned_files % settings.library_scan_batch_size == 0 and not flush_batch():
+            return
+    if batch and not flush_batch():
+        return
+    session.refresh(library_import)
+    if library_import.status == "cancelled":
+        session.commit()
+        return
+    library_import.scanned_files = scanned_files
+    library_import.scanned_directories = scanned_directories
+    library_import.current_path = None
+    library_import.status = "previewed"
+    from datetime import UTC, datetime
+
+    library_import.completed_at = datetime.now(UTC).replace(tzinfo=None)
+    write_audit(
+        session,
+        actor_id=library_import.owner_id,
+        action="library_import.previewed",
+        entity_type="library_import",
+        entity_id=library_import.id,
+        detail={"job_id": job_id, "scanned_files": scanned_files, "scanned_directories": scanned_directories},
+    )
+    session.commit()
 
 
 def download_candidate(session: Session, candidate_id: int, resolution_id: int, settings: Settings) -> None:
@@ -76,7 +194,12 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
     if job is None:
         raise RuntimeError("Job not found")
     payload = json.loads(job.payload_json)
-    if job.kind == "resolve_source_snapshot":
+    if job.kind == "scan_library_import":
+        library_import_id = payload.get("library_import_id")
+        if not isinstance(library_import_id, int):
+            raise RuntimeError("Invalid library import scan job payload")
+        scan_library_import(session, job.id, library_import_id, settings)
+    elif job.kind == "resolve_source_snapshot":
         snapshot_id = payload.get("snapshot_id")
         if not isinstance(snapshot_id, int):
             raise RuntimeError("Invalid snapshot job payload")
@@ -172,10 +295,32 @@ def main() -> None:
             else:
                 try:
                     process_job(session, job.id, settings)
-                    finish_job(session, job)
+                    session.refresh(job)
+                    if job.status != "cancelled":
+                        finish_job(session, job)
                     session.commit()
                 except Exception as exc:
                     logger.exception("Job %s failed", job.id)
+                    if job.kind == "scan_library_import":
+                        payload = json.loads(job.payload_json)
+                        library_import_id = payload.get("library_import_id")
+                        if isinstance(library_import_id, int):
+                            library_import = session.get(LibraryImport, library_import_id)
+                            if library_import is not None and library_import.status != "cancelled":
+                                from datetime import UTC, datetime
+
+                                library_import.status = "failed"
+                                library_import.error = str(exc)
+                                library_import.current_path = None
+                                library_import.completed_at = datetime.now(UTC).replace(tzinfo=None)
+                                write_audit(
+                                    session,
+                                    actor_id=library_import.owner_id,
+                                    action="library_import.failed",
+                                    entity_type="library_import",
+                                    entity_id=library_import.id,
+                                    detail={"job_id": job.id, "error": str(exc)},
+                                )
                     finish_job(session, job, error=str(exc))
                     session.commit()
                     if job.status == "failed":
