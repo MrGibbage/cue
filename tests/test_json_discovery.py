@@ -1,8 +1,11 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from cue.api import create_app
 from cue.config import Settings
 from cue.discovery import MAX_JSON_DOCUMENT_BYTES
+from cue.models import CollectionEntry, SourceSnapshot
 
 
 def test_json_preview_and_approval(tmp_path):
@@ -105,6 +108,44 @@ def test_json_preview_without_accepted_songs_cannot_be_approved(tmp_path):
         approval = client.post(f"/api/v1/source-snapshots/{preview.json()['id']}/approvals", headers=headers)
         assert approval.status_code == 409
         assert approval.json()["detail"] == "A preview needs at least one accepted song before it can be approved"
+
+
+def test_approving_a_later_preview_creates_a_new_collection_version(tmp_path):
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'cue.sqlite3'}",
+        media_root=tmp_path,
+        session_secret="test-session-secret-that-is-long-enough",
+        bootstrap_admin_username="owner",
+        bootstrap_admin_password="correct-horse-battery-staple",
+    )
+    with TestClient(create_app(settings), base_url="https://testserver") as client:
+        login = client.post(
+            "/api/v1/auth/login", json={"username": "owner", "password": "correct-horse-battery-staple"}
+        )
+        headers = {"X-CSRF-Token": login.json()["csrf_token"]}
+        collection_id = client.post("/api/v1/collections", headers=headers, json={"name": "Two lists"}).json()["id"]
+        first = client.post(
+            f"/api/v1/collections/{collection_id}/json-previews",
+            headers=headers,
+            json={"document": [{"artists": ["Rush"], "title": "Tom Sawyer"}]},
+        ).json()
+        assert client.post(f"/api/v1/source-snapshots/{first['id']}/approvals", headers=headers).status_code == 201
+        second = client.post(
+            f"/api/v1/collections/{collection_id}/json-previews",
+            headers=headers,
+            json={"document": [{"artists": ["Rush"], "title": "Limelight"}]},
+        ).json()
+        approval = client.post(f"/api/v1/source-snapshots/{second['id']}/approvals", headers=headers)
+        assert approval.status_code == 201
+        with Session(client.app.state.engine) as session:
+            first_snapshot = session.get(SourceSnapshot, first["id"])
+            second_snapshot = session.get(SourceSnapshot, second["id"])
+            assert first_snapshot.collection_version_id != second_snapshot.collection_version_id
+            assert session.scalar(
+                select(CollectionEntry.id).where(
+                    CollectionEntry.collection_version_id == second_snapshot.collection_version_id
+                )
+            ) is not None
 
 
 def test_api_json_preview_rejects_documents_over_the_shared_limit(tmp_path):

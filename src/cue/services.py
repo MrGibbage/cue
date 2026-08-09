@@ -274,6 +274,25 @@ def approve_snapshot(session: Session, snapshot: SourceSnapshot, owner: User) ->
     )
     if not rows:
         raise ValueError("A preview needs at least one accepted song before it can be approved")
+    existing_entry = session.scalar(
+        select(CollectionEntry.id)
+        .where(CollectionEntry.collection_version_id == snapshot.collection_version_id)
+        .limit(1)
+    )
+    if existing_entry is not None:
+        previous_version = session.get(CollectionVersion, snapshot.collection_version_id)
+        if previous_version is None:
+            raise ValueError("Snapshot collection version no longer exists")
+        latest_version = latest_collection_version(session, snapshot.collection_id)
+        replacement_version = CollectionVersion(
+            collection_id=snapshot.collection_id,
+            version=latest_version.version + 1,
+            recipe_json=previous_version.recipe_json,
+            created_by_id=owner.id,
+        )
+        session.add(replacement_version)
+        session.flush()
+        snapshot.collection_version_id = replacement_version.id
     for ordinal, row in enumerate(rows, start=1):
         recording = session.scalar(select(Recording).where(Recording.canonical_key == row.canonical_key))
         if recording is None:
@@ -308,7 +327,7 @@ def approve_snapshot(session: Session, snapshot: SourceSnapshot, owner: User) ->
         action="source_snapshot.approved",
         entity_type="source_snapshot",
         entity_id=snapshot.id,
-        detail={"accepted_rows": len(rows), "job_id": job.id},
+        detail={"accepted_rows": len(rows), "job_id": job.id, "collection_version_id": snapshot.collection_version_id},
     )
     return job
 
