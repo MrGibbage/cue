@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from cue.auth import Principal, password_hash, require_csrf
@@ -25,6 +25,7 @@ from cue.models import (
     LibraryImport,
     LibraryImportRow,
     PlaylistExport,
+    PublishedAsset,
     Recording,
     SourceRow,
     SourceSnapshot,
@@ -505,7 +506,9 @@ def select_candidate_form(
 
 
 @router.get("/library", response_class=HTMLResponse)
-def library_page(request: Request) -> HTMLResponse:
+def library_page(
+    request: Request, page: Annotated[int, Query(ge=1)] = 1, query: Annotated[str, Query(max_length=128)] = ""
+) -> HTMLResponse:
     with Session(request.app.state.engine) as session:
         user = current_user(request, session)
         if user is None:
@@ -515,7 +518,43 @@ def library_page(request: Request) -> HTMLResponse:
                 select(LibraryImport).where(LibraryImport.owner_id == user.id).order_by(LibraryImport.id.desc())
             )
         )
-        return render(request, "library.html", title="Library", user=user, imports=imports)
+        needle = query.strip()
+        filters = []
+        if needle:
+            pattern = f"%{needle}%"
+            filters.append(
+                or_(
+                    PublishedAsset.relative_path.ilike(pattern),
+                    Recording.title.ilike(pattern),
+                    Recording.artists_json.ilike(pattern),
+                )
+            )
+        total_assets = session.scalar(
+            select(func.count())
+            .select_from(PublishedAsset)
+            .join(Recording, PublishedAsset.recording_id == Recording.id)
+            .where(*filters)
+        ) or 0
+        assets = session.execute(
+            select(PublishedAsset, Recording)
+            .join(Recording, PublishedAsset.recording_id == Recording.id)
+            .where(*filters)
+            .order_by(PublishedAsset.relative_path)
+            .offset((page - 1) * LIBRARY_PAGE_SIZE)
+            .limit(LIBRARY_PAGE_SIZE)
+        ).all()
+        return render(
+            request,
+            "library.html",
+            title="Library",
+            user=user,
+            imports=imports,
+            assets=assets,
+            total_assets=total_assets,
+            page=page,
+            query=needle,
+            has_next=page * LIBRARY_PAGE_SIZE < total_assets,
+        )
 
 
 @router.post("/library/previews")
