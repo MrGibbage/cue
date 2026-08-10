@@ -15,11 +15,19 @@ class ProviderCandidate:
     duration_seconds: int | None
 
 
-def search_youtube(artists: list[str], title: str, *, limit: int = 5) -> list[ProviderCandidate]:
+def _cookie_arguments(cookies_file: Path | None) -> list[str]:
+    if cookies_file and cookies_file.is_file() and cookies_file.stat().st_size:
+        return ["--cookies", str(cookies_file)]
+    return []
+
+
+def search_youtube(
+    artists: list[str], title: str, *, limit: int = 5, cookies_file: Path | None = None
+) -> list[ProviderCandidate]:
     """Return yt-dlp search metadata only; this function never downloads media."""
     query = f"{' '.join(artists)} {title} official music video"
     result = subprocess.run(
-        ["yt-dlp", "--dump-json", "--no-playlist", f"ytsearch{limit}:{query}"],
+        ["yt-dlp", "--dump-json", "--no-playlist", *_cookie_arguments(cookies_file), f"ytsearch{limit}:{query}"],
         check=False,
         capture_output=True,
         text=True,
@@ -48,13 +56,14 @@ def search_youtube(artists: list[str], title: str, *, limit: int = 5) -> list[Pr
     return candidates
 
 
-def download_youtube(url: str, destination_template: Path) -> Path:
+def download_youtube(url: str, destination_template: Path, *, cookies_file: Path | None = None) -> Path:
     """Download one approved candidate into private staging."""
     result = subprocess.run(
         [
             "yt-dlp",
             "--no-playlist",
             "--no-progress",
+            *_cookie_arguments(cookies_file),
             "--format",
             "bv*+ba/b",
             "--merge-output-format",

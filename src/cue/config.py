@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     m3u_path_prefix: str | None = None
     staging_root: Path | None = None
     download_workspace: Path | None = None
+    youtube_cookies_file: Path = Path("/run/secrets/youtube-cookies")
     host: str = "0.0.0.0"
     port: int = Field(default=8080, ge=1, le=65535)
     log_level: str = "INFO"

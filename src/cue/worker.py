@@ -168,7 +168,9 @@ def download_candidate(session: Session, candidate_id: int, resolution_id: int, 
     stage_dir = Path(stage_root) / f"candidate-{candidate.id}"
     stage_dir.mkdir(parents=True, exist_ok=True)
     try:
-        source = download_youtube(candidate.url, stage_dir / "download.%(ext)s")
+        source = download_youtube(
+            candidate.url, stage_dir / "download.%(ext)s", cookies_file=settings.youtube_cookies_file
+        )
         validate_video(source)
         filename = safe_filename(recording, candidate, source.suffix)
         destination = publish_atomically(source, settings.media_root, filename)
@@ -232,7 +234,11 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                 continue
             rescore_recording_candidates(session, recording)
             candidates = store_youtube_candidates(
-                session, recording, search_youtube(json.loads(recording.artists_json), recording.title)
+                session,
+                recording,
+                search_youtube(
+                    json.loads(recording.artists_json), recording.title, cookies_file=settings.youtube_cookies_file
+                ),
             )
             resolution = decide_resolution(session, entry, candidates)
             if resolution.status == "review":
