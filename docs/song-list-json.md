@@ -47,6 +47,10 @@ An array is also valid when no document-level source metadata is needed:
   as separate entries when useful, such as `["Artist", "Featured artist"]`.
   Each item may have up to 16 artist entries, each up to 255 characters.
 - `title`: a non-empty string, up to 512 characters.
+  Use the released recording title here, including any punctuation that belongs
+  to the title. Put source commentary, rationale, or a requested version in
+  `notes`; Cue preserves arbitrary source input and future versions will ask
+  rather than silently rewrite ambiguous title text.
 
 ## Optional fields
 

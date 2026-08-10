@@ -201,6 +201,18 @@ safety boundary.
 The detailed product proposal and acceptance criteria are in
 [new-library-setup.md](new-library-setup.md).
 
+### Title identity clarification
+
+List input may include legitimate parenthetical titles, intentional version
+requirements, or arbitrary source/LLM commentary. Cue must preserve literal
+input and immutable provenance, but should use provider evidence to ask the
+owner a focused question when no credible result supports the submitted
+artist/title and a conservative alternative does have support. It must not
+silently strip punctuation or queue a download from that inference.
+
+The detailed proposal is in
+[title-identity-clarification.md](title-identity-clarification.md).
+
 ## MVP decision record
 
 ### Product direction — 2026-08-04
