@@ -60,9 +60,26 @@ def store_youtube_candidates(
                 reasons_json=json.dumps(score.reasons),
             )
             session.add(existing)
+        else:
+            existing.title = candidate.title
+            existing.uploader = candidate.uploader
+            existing.duration_seconds = candidate.duration_seconds
+            existing.classifications_json = json.dumps(score.classifications)
+            existing.score = score.score
+            existing.reasons_json = json.dumps(score.reasons)
         stored.append(existing)
     session.flush()
     return stored
+
+
+def rescore_recording_candidates(session: Session, recording: Recording) -> None:
+    """Refresh persisted search evidence when ranking rules improve."""
+    artists = json.loads(recording.artists_json)
+    for candidate in session.scalars(select(CandidateAsset).where(CandidateAsset.recording_id == recording.id)):
+        score = score_candidate(artists, recording.title, candidate.title, candidate.uploader)
+        candidate.classifications_json = json.dumps(score.classifications)
+        candidate.score = score.score
+        candidate.reasons_json = json.dumps(score.reasons)
 
 
 def decide_resolution(
@@ -76,7 +93,9 @@ def decide_resolution(
         resolution = CollectionResolution(collection_entry_id=entry.id)
         session.add(resolution)
     clear = [
-        candidate for candidate in candidates if json.loads(candidate.classifications_json) == ["official_music_video"]
+        candidate
+        for candidate in candidates
+        if "official_music_video" in json.loads(candidate.classifications_json) and candidate.score >= 100
     ]
     if len(clear) == 1:
         resolution.candidate_asset_id = clear[0].id

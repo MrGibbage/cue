@@ -35,6 +35,7 @@ from cue.services import (
     decide_resolution,
     get_download_batch_size,
     queue_candidate_download,
+    rescore_recording_candidates,
     store_youtube_candidates,
     write_audit,
 )
@@ -229,6 +230,7 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                 resolution.status = "published"
                 entry.status = "resolved"
                 continue
+            rescore_recording_candidates(session, recording)
             candidates = store_youtube_candidates(
                 session, recording, search_youtube(json.loads(recording.artists_json), recording.title)
             )
