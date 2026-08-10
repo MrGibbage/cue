@@ -177,6 +177,30 @@ visualizers/static-art uploads, and likely filename-to-recording mismatches.
 The full proposal and acceptance criteria are in
 [library-quality-audit.md](library-quality-audit.md).
 
+## Next product workflow — guided new-library setup
+
+Cue's core operations are implemented, but first-time setup currently spans
+media-root deployment, optional existing-library import, JSON source preview,
+approval, background work, candidate review, and export. The next product
+workflow should make that sequence legible without adding a bypass around any
+safety boundary.
+
+- Add a resumable dashboard checklist for a new/test library versus an existing
+  library, acquisition defaults, first JSON list, job/review progress, and
+  export.
+- Retain one active deployment-configured media root initially. A clean test
+  run uses a separate Compose/data instance and an empty dedicated media root;
+  it must not repoint the production database at an empty folder.
+- Defer any reset/delete feature until Cue has root-bound ownership evidence.
+  A future test-only reset requires a complete preview, verified backup, typed
+  confirmation, durable job/audit trail, and can delete only Cue-owned media
+  in that declared test root.
+- Keep existing-library scanning read-only and all source/import/download/export
+  approval gates intact.
+
+The detailed product proposal and acceptance criteria are in
+[new-library-setup.md](new-library-setup.md).
+
 ## MVP decision record
 
 ### Product direction — 2026-08-04

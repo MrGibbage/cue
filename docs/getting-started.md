@@ -17,6 +17,13 @@ files until you explicitly approve it.
 3. Open Cue in a browser and sign in. On the supplied deployment this is
    `https://cue.pelorus.org`.
 
+For experimentation, use a separate, empty media root **and a separate Cue
+data/Compose instance**. Do not change a production instance's media root to
+an empty test folder: its database still records paths for the production
+library. See the proposed [new-library setup and test-workspace
+model](new-library-setup.md) for the intended guided workflow and future safe
+reset boundary.
+
 ## Option A: bring an existing library under Cue
 
 Use this first when you already have files in the mounted media directory.
