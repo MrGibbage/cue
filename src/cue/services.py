@@ -34,6 +34,44 @@ from cue.providers import ProviderCandidate
 from cue.scoring import score_candidate
 
 
+def candidate_policy(collection: Collection) -> dict[str, object]:
+    try:
+        policy = json.loads(collection.candidate_policy_json)
+    except json.JSONDecodeError:
+        return {}
+    return policy if isinstance(policy, dict) else {}
+
+
+def assess_candidate(candidate: CandidateAsset, policy: dict[str, object]) -> tuple[int, bool, list[str]]:
+    """Apply collection-only format/channel rules to persisted candidate evidence."""
+    classifications = set(json.loads(candidate.classifications_json))
+    channel_ids = {item for item in policy.get("channel_ids", []) if isinstance(item, str)}
+    mode = policy.get("channel_mode") if isinstance(policy.get("channel_mode"), str) else "prefer"
+    trusted = candidate.uploader_id in channel_ids if candidate.uploader_id else False
+    allowed = "wrong_song" not in classifications
+    reasons: list[str] = []
+    if mode == "only" and not trusted:
+        allowed = False
+        reasons.append("not from an allowed channel")
+    elif mode == "exclude" and trusted:
+        allowed = False
+        reasons.append("from an excluded channel")
+    score = candidate.score
+    if trusted:
+        score += 20
+        reasons.append("trusted collection channel")
+    if "official_music_video" in classifications:
+        score += 10
+        reasons.append("preferred format: official music video")
+    elif "lyric" in classifications:
+        score -= 20
+        reasons.append("lower-priority format: lyric video")
+    elif "live" in classifications:
+        score -= 15
+        reasons.append("lower-priority format: live performance")
+    return max(0, min(score, 120)), allowed, reasons
+
+
 def store_youtube_candidates(
     session: Session, recording: Recording, candidates: list[ProviderCandidate]
 ) -> list[CandidateAsset]:
@@ -54,6 +92,7 @@ def store_youtube_candidates(
                 url=candidate.url,
                 title=candidate.title,
                 uploader=candidate.uploader,
+                uploader_id=candidate.uploader_id,
                 duration_seconds=candidate.duration_seconds,
                 classifications_json=json.dumps(score.classifications),
                 score=score.score,
@@ -63,6 +102,7 @@ def store_youtube_candidates(
         else:
             existing.title = candidate.title
             existing.uploader = candidate.uploader
+            existing.uploader_id = candidate.uploader_id
             existing.duration_seconds = candidate.duration_seconds
             existing.classifications_json = json.dumps(score.classifications)
             existing.score = score.score
@@ -83,7 +123,7 @@ def rescore_recording_candidates(session: Session, recording: Recording) -> None
 
 
 def decide_resolution(
-    session: Session, entry: CollectionEntry, candidates: list[CandidateAsset]
+    session: Session, entry: CollectionEntry, candidates: list[CandidateAsset], policy: dict[str, object] | None = None
 ) -> CollectionResolution:
     """Apply the strict default policy without downloading anything."""
     resolution = session.scalar(
@@ -92,11 +132,19 @@ def decide_resolution(
     if resolution is None:
         resolution = CollectionResolution(collection_entry_id=entry.id)
         session.add(resolution)
-    clear = [
-        candidate
-        for candidate in candidates
-        if "official_music_video" in json.loads(candidate.classifications_json) and candidate.score >= 100
-    ]
+    policy = policy or {}
+    clear = []
+    for candidate in candidates:
+        effective_score, allowed, _ = assess_candidate(candidate, policy)
+        trusted_ids = {item for item in policy.get("channel_ids", []) if isinstance(item, str)}
+        trusted = candidate.uploader_id in trusted_ids if candidate.uploader_id else False
+        if (
+            allowed
+            and "official_music_video" in json.loads(candidate.classifications_json)
+            and effective_score >= 100
+            and (candidate.score >= 100 or trusted)
+        ):
+            clear.append(candidate)
     if len(clear) == 1:
         resolution.candidate_asset_id = clear[0].id
         resolution.status = "auto_selected"

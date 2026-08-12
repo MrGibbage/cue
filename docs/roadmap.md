@@ -213,6 +213,17 @@ silently strip punctuation or queue a download from that inference.
 The detailed proposal is in
 [title-identity-clarification.md](title-identity-clarification.md).
 
+### Candidate policy and publisher authority
+
+2026-08-12: Candidate review now separates correct-song evidence, format, and
+explicit stable-channel authority. Collections support preferred, only, and
+excluded YouTube channel ID policies; the latter two are hard
+selection/download constraints. This establishes a safe foundation for artist,
+Vevo, label, and distributor preferences. Dedicated per-channel discovery and
+named trust relationships remain follow-up work.
+
+See [candidate-policy.md](candidate-policy.md).
+
 ## MVP decision record
 
 ### Product direction — 2026-08-04

@@ -53,6 +53,7 @@ class Collection(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(255))
+    candidate_policy_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -134,6 +135,7 @@ class CandidateAsset(Base):
     url: Mapped[str] = mapped_column(String(2048))
     title: Mapped[str] = mapped_column(String(1024))
     uploader: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    uploader_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     classifications_json: Mapped[str] = mapped_column(Text, default="[]")
     score: Mapped[int] = mapped_column(Integer)

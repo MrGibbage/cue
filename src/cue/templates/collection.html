@@ -48,6 +48,17 @@
   <br><br><button type="button" class="secondary" onclick="copyTextFrom('llm-json-instructions', this)">Copy instructions</button>
 </details>
 
+<details class="panel" style="margin-top:1rem">
+  <summary><strong>Candidate channel policy</strong></summary>
+  <p class="muted">Channel IDs are stable YouTube channel identifiers. Use a preferred list to boost trusted artist, label, or distributor channels; “only” is a hard selection/download constraint.</p>
+  <form method="post" action="/collections/{{ collection.id }}/candidate-policy">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Rule<select name="channel_mode"><option value="prefer"{% if candidate_policy.get('channel_mode', 'prefer') == 'prefer' %} selected{% endif %}>Prefer these channels</option><option value="only"{% if candidate_policy.get('channel_mode') == 'only' %} selected{% endif %}>Only these channels</option><option value="exclude"{% if candidate_policy.get('channel_mode') == 'exclude' %} selected{% endif %}>Exclude these channels</option></select></label>
+    <label>YouTube channel IDs, one per line<textarea name="channel_ids" placeholder="UC...">{{ candidate_policy.get('channel_ids', [])|join('\n') }}</textarea></label>
+    <button class="secondary">Save policy</button>
+  </form>
+</details>
+
 <div class="panel" style="margin-top:1rem">
   <h2>Snapshots</h2>
   {% for snapshot in snapshots %}
@@ -65,6 +76,6 @@
 {% if latest %}
 <form style="margin:1rem 0" method="post" action="/collections/{{ collection.id }}/exports"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Preview M3U8 export</button></form>
 <h2>Current resolved list</h2>
-<table><tr><th>#</th><th>Recording</th><th>Status / choices</th></tr>{% for item in items %}<tr><td>{{ item.entry.ordinal }}</td><td>{{ item.recording.artists_json }} — {{ item.recording.title }}</td><td><span class="tag {{ item.resolution.status if item.resolution else '' }}">{{ item.resolution.status if item.resolution else 'unresolved' }}</span>{% if item.resolution and item.resolution.status == 'review' %}{% for candidate in item.candidates %}<div style="margin-top:.5rem"><a href="{{ candidate.url }}" target="_blank">{{ candidate.title }}</a> <span class="muted">{{ candidate.score }}</span><form class="inline" method="post" action="/candidates/{{ candidate.id }}/select"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entry_id" value="{{ item.entry.id }}"><button>Select</button></form></div>{% endfor %}{% endif %}</td></tr>{% endfor %}</table>
+<table><tr><th>#</th><th>Recording</th><th>Status / choices</th></tr>{% for item in items %}<tr><td>{{ item.entry.ordinal }}</td><td>{{ item.recording.artists_json }} — {{ item.recording.title }}</td><td><span class="tag {{ item.resolution.status if item.resolution else '' }}">{{ item.resolution.status if item.resolution else 'unresolved' }}</span>{% if item.resolution and item.resolution.status == 'review' %}{% for option in item.candidates %}<div style="margin-top:.5rem{% if not option.allowed %};opacity:.55{% endif %}"><a href="{{ option.candidate.url }}" target="_blank">{{ option.candidate.title }}</a> <span class="muted">{{ option.policy_score }} · {{ option.candidate.uploader or 'unknown channel' }}</span>{% if option.policy_reasons %}<br><span class="muted">{{ option.policy_reasons|join('; ') }}</span>{% endif %}{% if option.allowed %}<form class="inline" method="post" action="/candidates/{{ option.candidate.id }}/select"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="entry_id" value="{{ item.entry.id }}"><button>Select</button></form>{% endif %}</div>{% endfor %}{% endif %}</td></tr>{% endfor %}</table>
 {% endif %}
 {% endblock %}

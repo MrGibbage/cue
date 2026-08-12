@@ -16,13 +16,14 @@ def test_youtube_search_is_metadata_only(monkeypatch):
             stderr="",
             stdout=(
                 '{"id":"abc","webpage_url":"https://youtube.test/watch?v=abc",'
-                '"title":"Rush - Tom Sawyer","uploader":"Rush","duration":281}\n'
+                '"title":"Rush - Tom Sawyer","uploader":"Rush","channel_id":"UC-rush","duration":281}\n'
             ),
         )
 
     monkeypatch.setattr("cue.providers.subprocess.run", fake_run)
     result = search_youtube(["Rush"], "Tom Sawyer")
     assert result[0].provider_id == "abc"
+    assert result[0].uploader_id == "UC-rush"
     assert "--dump-json" in seen["command"]
     assert not any("download" in part for part in seen["command"])
 

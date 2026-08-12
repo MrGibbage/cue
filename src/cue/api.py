@@ -654,6 +654,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "title": candidate.title,
                     "url": candidate.url,
                     "uploader": candidate.uploader,
+                    "uploader_id": candidate.uploader_id,
                     "score": candidate.score,
                     "classifications": json.loads(candidate.classifications_json),
                     "reasons": json.loads(candidate.reasons_json),

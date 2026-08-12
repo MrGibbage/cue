@@ -27,3 +27,22 @@ def test_wrong_song_cannot_be_classified_as_an_official_video():
     assert wrong_song.score == 0
     assert "wrong_song" in wrong_song.classifications
     assert "official_music_video" not in wrong_song.classifications
+
+
+def test_official_video_outranks_artist_channel_lyric_video():
+    rhino = score_candidate(
+        ["Foreigner"],
+        "I Want to Know What Love Is",
+        "Foreigner - I Want To Know What Love Is (Official Music Video)",
+        "RHINO",
+    )
+    lyric = score_candidate(
+        ["Foreigner"],
+        "I Want to Know What Love Is",
+        "Foreigner - I Want To Know What Love Is (Official Lyric Video)",
+        "Foreigner",
+    )
+
+    assert rhino.score > lyric.score
+    assert "official_music_video" in rhino.classifications
+    assert lyric.classifications == ["lyric"]

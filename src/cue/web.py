@@ -35,7 +35,9 @@ from cue.services import (
     approve_library_import,
     approve_playlist_export,
     approve_snapshot,
+    assess_candidate,
     cancel_library_import_scan,
+    candidate_policy,
     create_collection,
     create_json_preview,
     create_library_import_preview,
@@ -192,13 +194,26 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
                 .order_by(CollectionEntry.ordinal)
             ).all()
             for entry, recording, resolution in rows:
-                candidates = list(
+                policy = candidate_policy(collection)
+                raw_candidates = list(
                     session.scalars(
                         select(CandidateAsset)
                         .where(CandidateAsset.recording_id == recording.id)
                         .order_by(CandidateAsset.score.desc())
                     )
                 )
+                candidates = []
+                for candidate in raw_candidates:
+                    policy_score, allowed, policy_reasons = assess_candidate(candidate, policy)
+                    candidates.append(
+                        {
+                            "candidate": candidate,
+                            "policy_score": policy_score,
+                            "allowed": allowed,
+                            "policy_reasons": policy_reasons,
+                        }
+                    )
+                candidates.sort(key=lambda item: (not item["allowed"], -item["policy_score"], item["candidate"].id))
                 items.append(
                     {
                         "entry": entry,
@@ -218,8 +233,38 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
             snapshot_provenance=snapshot_provenance,
             latest=latest,
             items=items,
+            candidate_policy=policy if latest else candidate_policy(collection),
             draft_document=draft_document,
         )
+
+
+@router.post("/collections/{collection_id}/candidate-policy")
+def update_candidate_policy_form(
+    collection_id: int,
+    request: Request,
+    channel_mode: Annotated[str, Form()],
+    channel_ids: Annotated[str, Form()] = "",
+    _: Annotated[Principal, Depends(require_csrf)] = None,
+) -> RedirectResponse:
+    if channel_mode not in {"prefer", "only", "exclude"}:
+        raise HTTPException(status_code=422, detail="Invalid channel policy")
+    ids = [line.strip() for line in channel_ids.splitlines() if line.strip()]
+    if any(len(value) > 255 for value in ids):
+        raise HTTPException(status_code=422, detail="Channel IDs must be at most 255 characters")
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        collection = session.get(Collection, collection_id)
+        if collection is None or collection.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        collection.candidate_policy_json = json.dumps(
+            {"channel_mode": channel_mode, "channel_ids": ids}, sort_keys=True
+        )
+        write_audit(
+            session, actor_id=user.id, action="collection.candidate_policy_updated", entity_type="collection",
+            entity_id=collection.id, detail=json.loads(collection.candidate_policy_json)
+        )
+        session.commit()
+    return redirect(f"/collections/{collection_id}")
 
 
 @router.get("/snapshots/{snapshot_id}", response_class=HTMLResponse)
@@ -490,6 +535,15 @@ def select_candidate_form(
         candidate, entry = session.get(CandidateAsset, candidate_id), session.get(CollectionEntry, entry_id)
         if candidate is None or entry is None or candidate.recording_id != entry.recording_id:
             raise HTTPException(status_code=404, detail="Candidate not found")
+        source_row = session.get(SourceRow, entry.source_row_id)
+        snapshot = session.get(SourceSnapshot, source_row.snapshot_id) if source_row else None
+        collection = session.get(Collection, snapshot.collection_id) if snapshot else None
+        if collection is None or collection.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        _, allowed, _ = assess_candidate(candidate, candidate_policy(collection))
+        if not allowed:
+            request.session["flash"] = ("error", "This collection's channel policy does not allow that candidate.")
+            return redirect(f"/collections/{collection.id}")
         resolution = session.scalar(
             select(CollectionResolution).where(CollectionResolution.collection_entry_id == entry.id)
         )
@@ -501,8 +555,6 @@ def select_candidate_form(
         candidate.status = "selected"
         queue_candidate_download(session, owner=user, resolution=resolution)
         session.commit()
-        source_row = session.get(SourceRow, entry.source_row_id)
-        snapshot = session.get(SourceSnapshot, source_row.snapshot_id) if source_row else None
         return redirect(f"/collections/{snapshot.collection_id}" if snapshot else "/")
 
 

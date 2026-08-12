@@ -10,7 +10,7 @@ from cue.models import (
     SourceSnapshot,
     User,
 )
-from cue.services import decide_resolution, queue_candidate_download
+from cue.services import assess_candidate, decide_resolution, queue_candidate_download
 
 
 def test_clear_official_video_is_auto_selected_and_queued(session):
@@ -195,3 +195,16 @@ def test_no_candidates_leaves_recording_unresolved(session):
     resolution = decide_resolution(session, entry, [])
 
     assert resolution.status == "unresolved"
+
+
+def test_channel_only_policy_excludes_other_candidates(session):
+    candidate = CandidateAsset(
+        recording_id=1, provider="youtube", provider_id="fan", url="https://example.test/fan", title="Song", score=90,
+        uploader_id="UC-fan", classifications_json='["official_music_video"]', reasons_json="[]"
+    )
+
+    score, allowed, reasons = assess_candidate(candidate, {"channel_mode": "only", "channel_ids": ["UC-rhino"]})
+
+    assert score == 100
+    assert not allowed
+    assert reasons == ["not from an allowed channel", "preferred format: official music video"]

@@ -34,15 +34,15 @@ def score_candidate(artists: list[str], title: str, candidate_title: str, upload
         score += 30
         reasons.append("artist match")
     if _OFFICIAL_VIDEO.search(observed):
-        score += 15
+        score += 10
         reasons.append("official-video title signal")
     normalized_uploader = normalize_text(uploader or "")
     normalized_artists = [normalize_text(artist) for artist in artists]
     if normalized_uploader and any(normalized_uploader == artist for artist in normalized_artists):
-        score += 35
+        score += 15
         reasons.append("uploader exactly matches artist")
     elif normalized_uploader and any(artist in normalized_uploader for artist in normalized_artists):
-        score += 10
+        score += 5
         reasons.append("uploader includes artist")
     negative_formats = [item for item in classifications if item not in {"official_music_video", "wrong_song"}]
     if negative_formats:

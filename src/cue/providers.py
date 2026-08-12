@@ -12,6 +12,7 @@ class ProviderCandidate:
     url: str
     title: str
     uploader: str | None
+    uploader_id: str | None
     duration_seconds: int | None
 
 
@@ -50,6 +51,13 @@ def search_youtube(
                 url=webpage_url,
                 title=candidate_title,
                 uploader=data.get("uploader") if isinstance(data.get("uploader"), str) else None,
+                uploader_id=(
+                    data.get("channel_id")
+                    if isinstance(data.get("channel_id"), str)
+                    else data.get("uploader_id")
+                    if isinstance(data.get("uploader_id"), str)
+                    else None
+                ),
                 duration_seconds=int(duration) if isinstance(duration, (int, float)) else None,
             )
         )

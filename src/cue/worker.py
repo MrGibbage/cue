@@ -18,6 +18,7 @@ from cue.library import publish_atomically, safe_filename, scan_library
 from cue.logging import configure_logging
 from cue.models import (
     CandidateAsset,
+    Collection,
     CollectionEntry,
     CollectionResolution,
     LibraryImport,
@@ -32,6 +33,7 @@ from cue.providers import download_youtube, search_youtube, validate_video
 from cue.publishers import write_export_artifacts
 from cue.queue import claim_next_job, finish_job
 from cue.services import (
+    candidate_policy,
     decide_resolution,
     get_download_batch_size,
     queue_candidate_download,
@@ -240,7 +242,10 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                     json.loads(recording.artists_json), recording.title, cookies_file=settings.youtube_cookies_file
                 ),
             )
-            resolution = decide_resolution(session, entry, candidates)
+            collection = session.get(Collection, snapshot.collection_id)
+            if collection is None:
+                raise RuntimeError("Collection not found")
+            resolution = decide_resolution(session, entry, candidates, candidate_policy(collection))
             if resolution.status == "review":
                 review_count += 1
             if resolution.status == "auto_selected":
