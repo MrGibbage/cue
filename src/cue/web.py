@@ -197,54 +197,9 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
                         break
                 except json.JSONDecodeError:
                     continue
-        items: list[dict[str, object]] = []
+        items = collection_items(session, collection, latest) if latest else []
         if latest:
-            rows = session.execute(
-                select(CollectionEntry, Recording, CollectionResolution)
-                .join(Recording, CollectionEntry.recording_id == Recording.id)
-                .join(SourceRow, CollectionEntry.source_row_id == SourceRow.id)
-                .outerjoin(CollectionResolution, CollectionResolution.collection_entry_id == CollectionEntry.id)
-                .where(SourceRow.snapshot_id == latest.id)
-                .order_by(CollectionEntry.ordinal)
-            ).all()
-            for entry, recording, resolution in rows:
-                policy = candidate_policy(collection)
-                raw_candidates = list(
-                    session.scalars(
-                        select(CandidateAsset)
-                        .where(CandidateAsset.recording_id == recording.id)
-                        .order_by(CandidateAsset.score.desc())
-                    )
-                )
-                candidates = []
-                for candidate in raw_candidates:
-                    policy_score, allowed, policy_reasons = assess_candidate(candidate, policy)
-                    candidates.append(
-                        {
-                            "candidate": candidate,
-                            "policy_score": policy_score,
-                            "allowed": allowed,
-                            "policy_reasons": policy_reasons,
-                        }
-                    )
-                candidates.sort(key=lambda item: (not item["allowed"], -item["policy_score"], item["candidate"].id))
-                selected_candidate = next(
-                    (
-                        option
-                        for option in candidates
-                        if resolution is not None and option["candidate"].id == resolution.candidate_asset_id
-                    ),
-                    None,
-                )
-                items.append(
-                    {
-                        "entry": entry,
-                        "recording": recording,
-                        "resolution": resolution,
-                        "candidates": candidates,
-                        "selected_candidate": selected_candidate,
-                    }
-                )
+            policy = candidate_policy(collection)
         return render(
             request,
             "collection.html",
@@ -259,6 +214,78 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
             candidate_policy=policy if latest else candidate_policy(collection),
             run_job=run_job,
             draft_document=draft_document,
+        )
+
+
+def collection_items(session: Session, collection: Collection, latest: SourceSnapshot) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    policy = candidate_policy(collection)
+    if latest:
+        rows = session.execute(
+            select(CollectionEntry, Recording, CollectionResolution)
+            .join(Recording, CollectionEntry.recording_id == Recording.id)
+            .join(SourceRow, CollectionEntry.source_row_id == SourceRow.id)
+            .outerjoin(CollectionResolution, CollectionResolution.collection_entry_id == CollectionEntry.id)
+            .where(SourceRow.snapshot_id == latest.id)
+            .order_by(CollectionEntry.ordinal)
+        ).all()
+        for entry, recording, resolution in rows:
+            raw_candidates = list(
+                session.scalars(
+                    select(CandidateAsset)
+                    .where(CandidateAsset.recording_id == recording.id)
+                    .order_by(CandidateAsset.score.desc())
+                )
+            )
+            candidates = []
+            for candidate in raw_candidates:
+                policy_score, allowed, policy_reasons = assess_candidate(candidate, policy)
+                candidates.append(
+                    {
+                        "candidate": candidate,
+                        "policy_score": policy_score,
+                        "allowed": allowed,
+                        "policy_reasons": policy_reasons,
+                    }
+                )
+            candidates.sort(key=lambda item: (not item["allowed"], -item["policy_score"], item["candidate"].id))
+            selected_candidate = next(
+                (
+                    option
+                    for option in candidates
+                    if resolution is not None and option["candidate"].id == resolution.candidate_asset_id
+                ),
+                None,
+            )
+            items.append(
+                {
+                    "entry": entry,
+                    "recording": recording,
+                    "artists": json.loads(recording.artists_json),
+                    "resolution": resolution,
+                    "candidates": candidates,
+                    "selected_candidate": selected_candidate,
+                }
+            )
+    return items
+
+
+@router.get("/collections/{collection_id}/results", response_class=HTMLResponse)
+def collection_results(collection_id: int, request: Request) -> HTMLResponse:
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        collection = session.get(Collection, collection_id)
+        if collection is None or collection.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        latest = session.scalar(
+            select(SourceSnapshot)
+            .where(SourceSnapshot.collection_id == collection.id, SourceSnapshot.status == "approved")
+            .order_by(SourceSnapshot.id.desc())
+        )
+        return templates.TemplateResponse(
+            request,
+            "collection_results.html",
+            {"items": collection_items(session, collection, latest) if latest else []},
         )
 
 
