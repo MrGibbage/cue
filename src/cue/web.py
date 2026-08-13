@@ -228,12 +228,21 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
                         }
                     )
                 candidates.sort(key=lambda item: (not item["allowed"], -item["policy_score"], item["candidate"].id))
+                selected_candidate = next(
+                    (
+                        option
+                        for option in candidates
+                        if resolution is not None and option["candidate"].id == resolution.candidate_asset_id
+                    ),
+                    None,
+                )
                 items.append(
                     {
                         "entry": entry,
                         "recording": recording,
                         "resolution": resolution,
                         "candidates": candidates,
+                        "selected_candidate": selected_candidate,
                     }
                 )
         return render(
