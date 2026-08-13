@@ -31,7 +31,7 @@ from cue.models import (
 from cue.notifications import notify
 from cue.providers import download_youtube, search_youtube, validate_video
 from cue.publishers import write_export_artifacts
-from cue.queue import claim_next_job, finish_job
+from cue.queue import claim_next_job, finish_job, recover_interrupted_jobs
 from cue.services import (
     candidate_policy,
     decide_resolution,
@@ -302,6 +302,11 @@ def main() -> None:
     configure_logging(settings.log_level)
     run_migrations(settings)
     engine = create_db_engine(settings)
+    with Session(engine) as session:
+        recovered = recover_interrupted_jobs(session)
+        session.commit()
+    if recovered:
+        logger.warning("Recovered %s interrupted job(s) after worker restart", recovered)
     stop = Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())

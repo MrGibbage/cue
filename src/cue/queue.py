@@ -22,6 +22,24 @@ def claim_next_job(session: Session, worker_id: str) -> Job | None:
     return job
 
 
+def recover_interrupted_jobs(session: Session) -> int:
+    """Return jobs stranded by a stopped worker to the durable queue."""
+    jobs = list(session.scalars(select(Job).where(Job.status == "running")))
+    for job in jobs:
+        attempt = session.scalar(
+            select(JobAttempt).where(JobAttempt.job_id == job.id, JobAttempt.attempt_number == job.attempt_count)
+        )
+        if attempt is not None and attempt.status == "running":
+            attempt.status = "interrupted"
+            attempt.error = "Worker restarted before this attempt completed"
+            attempt.finished_at = datetime.now(UTC).replace(tzinfo=None)
+        job.status = "queued"
+        job.claimed_by = None
+        job.claimed_at = None
+        job.last_error = "Worker restarted; resuming from durable progress"
+    return len(jobs)
+
+
 def finish_job(session: Session, job: Job, *, error: str | None = None) -> None:
     attempt = session.scalars(
         select(JobAttempt).where(JobAttempt.job_id == job.id, JobAttempt.attempt_number == job.attempt_count)
