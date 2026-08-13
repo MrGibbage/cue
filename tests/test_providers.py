@@ -25,7 +25,27 @@ def test_youtube_search_is_metadata_only(monkeypatch):
     assert result[0].provider_id == "abc"
     assert result[0].uploader_id == "UC-rush"
     assert "--dump-json" in seen["command"]
+    assert "--ignore-errors" in seen["command"]
+    assert seen["command"][seen["command"].index("--js-runtimes") + 1] == "deno"
     assert not any("download" in part for part in seen["command"])
+
+
+def test_youtube_search_keeps_available_results_when_one_result_errors(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stderr="ERROR: [youtube] unavailable: This video is not available",
+            stdout=(
+                '{"id":"available","webpage_url":"https://youtube.test/watch?v=available",'
+                '"title":"Rush - Tom Sawyer"}\n'
+            ),
+        )
+
+    monkeypatch.setattr("cue.providers.subprocess.run", fake_run)
+
+    candidates = search_youtube(["Rush"], "Tom Sawyer")
+
+    assert [candidate.provider_id for candidate in candidates] == ["available"]
 
 
 def test_youtube_search_uses_a_nonempty_cookie_file(monkeypatch, tmp_path):

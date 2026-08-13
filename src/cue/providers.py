@@ -22,23 +22,39 @@ def _cookie_arguments(cookies_file: Path | None) -> list[str]:
     return []
 
 
+def _youtube_runtime_arguments() -> list[str]:
+    """Use the Deno runtime packaged with Cue for current YouTube extraction."""
+    return ["--js-runtimes", "deno"]
+
+
 def search_youtube(
     artists: list[str], title: str, *, limit: int = 5, cookies_file: Path | None = None
 ) -> list[ProviderCandidate]:
     """Return yt-dlp search metadata only; this function never downloads media."""
     query = f"{' '.join(artists)} {title} official music video"
     result = subprocess.run(
-        ["yt-dlp", "--dump-json", "--no-playlist", *_cookie_arguments(cookies_file), f"ytsearch{limit}:{query}"],
+        [
+            "yt-dlp",
+            "--dump-json",
+            "--no-playlist",
+            "--ignore-errors",
+            *_youtube_runtime_arguments(),
+            *_cookie_arguments(cookies_file),
+            f"ytsearch{limit}:{query}",
+        ],
         check=False,
         capture_output=True,
         text=True,
         timeout=60,
     )
-    if result.returncode != 0:
+    if result.returncode != 0 and not result.stdout.strip():
         raise RuntimeError(result.stderr.strip() or "yt-dlp search failed")
     candidates: list[ProviderCandidate] = []
     for line in result.stdout.splitlines():
-        data = json.loads(line)
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
         identifier = data.get("id")
         webpage_url = data.get("webpage_url")
         candidate_title = data.get("title")
@@ -71,6 +87,7 @@ def download_youtube(url: str, destination_template: Path, *, cookies_file: Path
             "yt-dlp",
             "--no-playlist",
             "--no-progress",
+            *_youtube_runtime_arguments(),
             *_cookie_arguments(cookies_file),
             "--format",
             "bv*+ba/b",

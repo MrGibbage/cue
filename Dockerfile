@@ -1,3 +1,5 @@
+FROM denoland/deno:bin-2.6.10 AS deno
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
@@ -6,6 +8,7 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY alembic.ini ./
 COPY migrations ./migrations
+COPY --from=deno /deno /usr/local/bin/deno
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
