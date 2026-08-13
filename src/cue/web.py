@@ -257,6 +257,22 @@ def collection_items(session: Session, collection: Collection, latest: SourceSna
                 ),
                 None,
             )
+            if selected_candidate is None and resolution is not None and resolution.status == "published":
+                published_candidate = session.scalar(
+                    select(CandidateAsset)
+                    .join(PublishedAsset, PublishedAsset.candidate_asset_id == CandidateAsset.id)
+                    .where(PublishedAsset.recording_id == recording.id)
+                    .order_by(PublishedAsset.id.desc())
+                    .limit(1)
+                )
+                if published_candidate is not None:
+                    policy_score, allowed, policy_reasons = assess_candidate(published_candidate, policy)
+                    selected_candidate = {
+                        "candidate": published_candidate,
+                        "policy_score": policy_score,
+                        "allowed": allowed,
+                        "policy_reasons": policy_reasons,
+                    }
             items.append(
                 {
                     "entry": entry,

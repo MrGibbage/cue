@@ -234,7 +234,14 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                 select(PublishedAsset).where(PublishedAsset.recording_id == recording.id).limit(1)
             )
             if existing_asset is not None:
-                resolution = decide_resolution(session, entry, [])
+                resolution = session.scalar(
+                    select(CollectionResolution).where(CollectionResolution.collection_entry_id == entry.id)
+                )
+                if resolution is None:
+                    resolution = CollectionResolution(collection_entry_id=entry.id)
+                    session.add(resolution)
+                if resolution.candidate_asset_id is None and existing_asset.candidate_asset_id is not None:
+                    resolution.candidate_asset_id = existing_asset.candidate_asset_id
                 resolution.status = "published"
                 entry.status = "resolved"
                 job.progress_current = ordinal
