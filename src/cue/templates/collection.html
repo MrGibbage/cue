@@ -32,6 +32,19 @@
   </form>
 </div>
 
+{% if run_job %}
+<section class="panel" id="collection-run" data-job-id="{{ run_job.id }}" style="margin-top:1rem">
+  <h2>Collection run</h2>
+  <p><span class="tag" id="run-status">{{ run_job.status }}</span> <span id="run-count">{{ run_job.progress_current }}{% if run_job.progress_total is not none %} / {{ run_job.progress_total }}{% endif %}</span></p>
+  <p id="run-message" class="muted">{{ run_job.progress_message or 'Waiting for the worker' }}</p>
+  <p id="run-error" class="review">{{ run_job.last_error or '' }}</p>
+  <p class="muted">Cue searches and evaluates one requested recording at a time. This panel refreshes automatically; detailed failures remain available in <a href="/jobs">Jobs</a>.</p>
+</section>
+<script>
+(()=>{const panel=document.getElementById('collection-run');if(!panel)return;const update=async()=>{try{const r=await fetch(`/jobs/${panel.dataset.jobId}/progress`);if(!r.ok)return;const j=await r.json();document.getElementById('run-status').textContent=j.status;document.getElementById('run-count').textContent=j.total===null?j.current:`${j.current} / ${j.total}`;document.getElementById('run-message').textContent=j.message||'Waiting for the worker';document.getElementById('run-error').textContent=j.error||'';if(['queued','running'].includes(j.status))setTimeout(update,2000)}catch(_){setTimeout(update,5000)}};update()})();
+</script>
+{% endif %}
+
 <details class="panel" style="margin-top:1rem">
   <summary><strong>Ask an AI to make a Cue song list</strong></summary>
   <p>Copy this entire instruction into your prompt. Ask for any theme—party, decade, one-hit wonders, hair bands, space songs, or anything else. <a href="/api/v1/song-list-schema" target="_blank" rel="noopener noreferrer">Open JSON Schema</a>.</p>

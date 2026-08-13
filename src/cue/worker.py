@@ -219,10 +219,14 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                 select(CollectionEntry).where(CollectionEntry.collection_version_id == snapshot.collection_version_id)
             )
         )
+        job.progress_total = len(entries)
+        job.progress_current = 0
+        job.progress_message = "Starting YouTube candidate search"
+        session.commit()
         queued_downloads = 0
         batch_size = get_download_batch_size(session, settings.default_download_batch_size)
         review_count = 0
-        for entry in entries:
+        for ordinal, entry in enumerate(entries, start=1):
             recording = session.get(Recording, entry.recording_id)
             if recording is None:
                 raise RuntimeError(f"Recording {entry.recording_id} not found")
@@ -233,6 +237,9 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                 resolution = decide_resolution(session, entry, [])
                 resolution.status = "published"
                 entry.status = "resolved"
+                job.progress_current = ordinal
+                job.progress_message = f"{recording.title}: reused existing library asset"
+                session.commit()
                 continue
             rescore_recording_candidates(session, recording)
             candidates = store_youtube_candidates(
@@ -256,6 +263,10 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                     resolution.status = "review"
                     resolution.candidate_asset_id = None
                     review_count += 1
+            job.progress_current = ordinal
+            job.progress_message = f"{recording.title}: {resolution.status.replace('_', ' ')}"
+            session.commit()
+        job.progress_message = "Candidate search complete"
         if review_count:
             notify(
                 settings,

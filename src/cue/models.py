@@ -254,6 +254,9 @@ class Job(Base):
     claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

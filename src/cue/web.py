@@ -22,6 +22,7 @@ from cue.models import (
     CollectionEntry,
     CollectionResolution,
     CollectionVersion,
+    Job,
     LibraryImport,
     LibraryImportRow,
     PlaylistExport,
@@ -183,6 +184,19 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
             for snapshot in snapshots
         }
         latest = next((snapshot for snapshot in snapshots if snapshot.status == "approved"), None)
+        run_job = None
+        if latest:
+            for job in session.scalars(
+                select(Job)
+                .where(Job.owner_id == user.id, Job.kind == "resolve_source_snapshot")
+                .order_by(Job.id.desc())
+            ):
+                try:
+                    if json.loads(job.payload_json).get("snapshot_id") == latest.id:
+                        run_job = job
+                        break
+                except json.JSONDecodeError:
+                    continue
         items: list[dict[str, object]] = []
         if latest:
             rows = session.execute(
@@ -234,8 +248,25 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
             latest=latest,
             items=items,
             candidate_policy=policy if latest else candidate_policy(collection),
+            run_job=run_job,
             draft_document=draft_document,
         )
+
+
+@router.get("/jobs/{job_id}/progress")
+def job_progress(job_id: int, request: Request) -> dict[str, object]:
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        job = session.get(Job, job_id)
+        if job is None or job.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {
+            "status": job.status,
+            "current": job.progress_current,
+            "total": job.progress_total,
+            "message": job.progress_message,
+            "error": job.last_error,
+        }
 
 
 @router.post("/collections/{collection_id}/candidate-policy")
