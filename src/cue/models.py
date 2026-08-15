@@ -144,6 +144,20 @@ class CandidateAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ChannelTrust(Base):
+    """An owner-confirmed authority relationship for a stable provider channel."""
+
+    __tablename__ = "channel_trusts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(64), default="youtube")
+    channel_id: Mapped[str] = mapped_column(String(255))
+    channel_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    authority: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class CollectionResolution(Base):
     __tablename__ = "collection_resolutions"
 

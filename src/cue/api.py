@@ -35,6 +35,7 @@ from cue.models import (
     ApiToken,
     AuditEvent,
     CandidateAsset,
+    ChannelTrust,
     Collection,
     CollectionEntry,
     CollectionResolution,
@@ -58,7 +59,9 @@ from cue.services import (
     create_json_preview,
     create_library_import_preview,
     create_playlist_export_preview,
+    owner_channel_trusts,
     queue_candidate_download,
+    queue_collection_reassessment,
     revoke_token,
     write_audit,
 )
@@ -99,6 +102,12 @@ class XmplaylistPreviewRequest(BaseModel):
 
 class CandidateSelectionRequest(BaseModel):
     collection_entry_id: int
+
+
+class ChannelTrustRequest(BaseModel):
+    channel_id: str = Field(min_length=1, max_length=255)
+    channel_name: str | None = Field(default=None, max_length=512)
+    authority: str = Field(pattern="^(artist|vevo|label|distributor)$")
 
 
 class LibraryImportPreviewRequest(BaseModel):
@@ -626,6 +635,89 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session.commit()
             return {"library_import_id": library_import.id, "status": library_import.status, "imported": imported}
 
+    @app.get("/api/v1/channels/trusts")
+    def list_channel_trusts(
+        request: Request, principal: Annotated[Principal, Depends(authenticate)]
+    ) -> list[dict[str, object]]:
+        require_scope(principal, "collections:read")
+        with database_session(request) as session:
+            return [
+                {
+                    "id": trust.id,
+                    "provider": trust.provider,
+                    "channel_id": trust.channel_id,
+                    "channel_name": trust.channel_name,
+                    "authority": trust.authority,
+                }
+                for trust in session.scalars(
+                    select(ChannelTrust)
+                    .where(ChannelTrust.owner_id == principal.user.id)
+                    .order_by(ChannelTrust.provider, ChannelTrust.channel_name, ChannelTrust.channel_id)
+                )
+            ]
+
+    @app.put("/api/v1/channels/trusts")
+    def put_channel_trust(
+        payload: ChannelTrustRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        with database_session(request) as session:
+            trust = session.scalar(
+                select(ChannelTrust).where(
+                    ChannelTrust.owner_id == principal.user.id,
+                    ChannelTrust.provider == "youtube",
+                    ChannelTrust.channel_id == payload.channel_id,
+                )
+            )
+            if trust is None:
+                trust = ChannelTrust(
+                    owner_id=principal.user.id,
+                    provider="youtube",
+                    channel_id=payload.channel_id,
+                    channel_name=payload.channel_name,
+                    authority=payload.authority,
+                )
+                session.add(trust)
+            else:
+                trust.channel_name, trust.authority = payload.channel_name, payload.authority
+            write_audit(
+                session,
+                actor_id=principal.user.id,
+                action="channel.trusted",
+                entity_type="channel_trust",
+                entity_id=payload.channel_id,
+                detail={"provider": "youtube", "channel_name": payload.channel_name, "authority": payload.authority},
+            )
+            session.commit()
+            return {"id": trust.id, "channel_id": trust.channel_id, "authority": trust.authority}
+
+    @app.post("/api/v1/collections/{collection_id}/candidate-reassessments", status_code=status.HTTP_202_ACCEPTED)
+    def queue_candidate_reassessment(
+        collection_id: int,
+        request: Request,
+        principal: Annotated[Principal, Depends(require_csrf)],
+    ) -> dict[str, object]:
+        require_administrator(request, principal)
+        require_scope(principal, "collections:write")
+        with database_session(request) as session:
+            collection = session.get(Collection, collection_id)
+            if collection is None or collection.owner_id != principal.user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+            job = queue_collection_reassessment(session, owner=principal.user, collection=collection)
+            write_audit(
+                session,
+                actor_id=principal.user.id,
+                action="collection.candidate_reassessment_queued",
+                entity_type="collection",
+                entity_id=collection.id,
+                detail={"job_id": job.id},
+            )
+            session.commit()
+            return {"job_id": job.id, "status": job.status, "downloads_queued": 0}
+
     @app.get("/api/v1/recordings/{recording_id}/candidates")
     def list_candidates(
         recording_id: int,
@@ -648,6 +740,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 .where(CandidateAsset.recording_id == recording_id)
                 .order_by(CandidateAsset.score.desc(), CandidateAsset.id)
             )
+            trusts = owner_channel_trusts(session, principal.user.id)
             return [
                 {
                     "id": candidate.id,
@@ -659,6 +752,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "classifications": json.loads(candidate.classifications_json),
                     "reasons": json.loads(candidate.reasons_json),
                     "status": candidate.status,
+                    "trusted_channel": candidate.uploader_id in trusts if candidate.uploader_id else False,
+                    "channel_authority": (
+                        trusts[candidate.uploader_id].authority if candidate.uploader_id in trusts else None
+                    ),
                 }
                 for candidate in candidates
             ]

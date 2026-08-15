@@ -18,6 +18,7 @@ from cue.discovery_providers import fetch_billboard_hot_100, fetch_xmplaylist_re
 from cue.models import (
     AuditEvent,
     CandidateAsset,
+    ChannelTrust,
     Collection,
     CollectionEntry,
     CollectionResolution,
@@ -44,7 +45,9 @@ from cue.services import (
     create_library_import_preview,
     create_playlist_export_preview,
     get_download_batch_size,
+    owner_channel_trusts,
     queue_candidate_download,
+    queue_collection_reassessment,
     set_download_batch_size,
     write_audit,
 )
@@ -188,16 +191,27 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
         if latest:
             for job in session.scalars(
                 select(Job)
-                .where(Job.owner_id == user.id, Job.kind == "resolve_source_snapshot")
+                .where(
+                    Job.owner_id == user.id,
+                    Job.kind.in_(("resolve_source_snapshot", "reassess_collection_candidates")),
+                )
                 .order_by(Job.id.desc())
             ):
                 try:
-                    if json.loads(job.payload_json).get("snapshot_id") == latest.id:
+                    payload = json.loads(job.payload_json)
+                    if payload.get("snapshot_id") == latest.id or payload.get("collection_id") == collection.id:
                         run_job = job
                         break
                 except json.JSONDecodeError:
                     continue
         items = collection_items(session, collection, latest) if latest else []
+        trusts = list(
+            session.scalars(
+                select(ChannelTrust)
+                .where(ChannelTrust.owner_id == user.id, ChannelTrust.provider == "youtube")
+                .order_by(ChannelTrust.channel_name, ChannelTrust.channel_id)
+            )
+        )
         if latest:
             policy = candidate_policy(collection)
         return render(
@@ -212,6 +226,7 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
             latest=latest,
             items=items,
             candidate_policy=policy if latest else candidate_policy(collection),
+            channel_trusts=trusts,
             run_job=run_job,
             draft_document=draft_document,
         )
@@ -220,6 +235,7 @@ def collection_page(collection_id: int, request: Request, draft_document: str = 
 def collection_items(session: Session, collection: Collection, latest: SourceSnapshot) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     policy = candidate_policy(collection)
+    trusts = owner_channel_trusts(session, collection.owner_id)
     if latest:
         rows = session.execute(
             select(CollectionEntry, Recording, CollectionResolution)
@@ -239,7 +255,7 @@ def collection_items(session: Session, collection: Collection, latest: SourceSna
             )
             candidates = []
             for candidate in raw_candidates:
-                policy_score, allowed, policy_reasons = assess_candidate(candidate, policy)
+                policy_score, allowed, policy_reasons = assess_candidate(candidate, policy, trusts)
                 candidates.append(
                     {
                         "candidate": candidate,
@@ -266,7 +282,7 @@ def collection_items(session: Session, collection: Collection, latest: SourceSna
                     .limit(1)
                 )
                 if published_candidate is not None:
-                    policy_score, allowed, policy_reasons = assess_candidate(published_candidate, policy)
+                    policy_score, allowed, policy_reasons = assess_candidate(published_candidate, policy, trusts)
                     selected_candidate = {
                         "candidate": published_candidate,
                         "policy_score": policy_score,
@@ -301,7 +317,11 @@ def collection_results(collection_id: int, request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
             request,
             "collection_results.html",
-            {"items": collection_items(session, collection, latest) if latest else []},
+            {
+                "items": collection_items(session, collection, latest) if latest else [],
+                "collection": collection,
+                "csrf_token": request.session.get("csrf_token"),
+            },
         )
 
 
@@ -347,6 +367,89 @@ def update_candidate_policy_form(
             entity_id=collection.id, detail=json.loads(collection.candidate_policy_json)
         )
         session.commit()
+    return redirect(f"/collections/{collection_id}")
+
+
+@router.post("/candidates/{candidate_id}/channel-trust")
+def trust_candidate_channel_form(
+    candidate_id: int,
+    request: Request,
+    authority: Annotated[str, Form()],
+    collection_id: Annotated[int, Form()],
+    _: Annotated[Principal, Depends(require_csrf)],
+) -> RedirectResponse:
+    if authority not in {"artist", "vevo", "label", "distributor"}:
+        raise HTTPException(status_code=422, detail="Invalid channel authority")
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        collection = session.get(Collection, collection_id)
+        candidate = session.get(CandidateAsset, candidate_id)
+        if collection is None or collection.owner_id != user.id or candidate is None or not candidate.uploader_id:
+            raise HTTPException(status_code=404, detail="Candidate channel not found")
+        # A trust record can only be created from evidence visible in this owner's collection.
+        visible = session.scalar(
+            select(CollectionEntry.id)
+            .join(CollectionVersion, CollectionEntry.collection_version_id == CollectionVersion.id)
+            .where(
+                CollectionVersion.collection_id == collection.id,
+                CollectionEntry.recording_id == candidate.recording_id,
+            )
+            .limit(1)
+        )
+        if visible is None:
+            raise HTTPException(status_code=404, detail="Candidate channel not found")
+        trust = session.scalar(
+            select(ChannelTrust).where(
+                ChannelTrust.owner_id == user.id,
+                ChannelTrust.provider == candidate.provider,
+                ChannelTrust.channel_id == candidate.uploader_id,
+            )
+        )
+        if trust is None:
+            trust = ChannelTrust(
+                owner_id=user.id,
+                provider=candidate.provider,
+                channel_id=candidate.uploader_id,
+                channel_name=candidate.uploader,
+                authority=authority,
+            )
+            session.add(trust)
+        else:
+            trust.channel_name, trust.authority = candidate.uploader, authority
+        write_audit(
+            session,
+            actor_id=user.id,
+            action="channel.trusted",
+            entity_type="channel_trust",
+            entity_id=candidate.uploader_id,
+            detail={"provider": candidate.provider, "channel_name": candidate.uploader, "authority": authority},
+        )
+        session.commit()
+    return redirect(f"/collections/{collection_id}")
+
+
+@router.post("/collections/{collection_id}/candidate-reassessments")
+def reassess_collection_candidates_form(
+    collection_id: int,
+    request: Request,
+    _: Annotated[Principal, Depends(require_csrf)],
+) -> RedirectResponse:
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        collection = session.get(Collection, collection_id)
+        if collection is None or collection.owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        job = queue_collection_reassessment(session, owner=user, collection=collection)
+        write_audit(
+            session,
+            actor_id=user.id,
+            action="collection.candidate_reassessment_queued",
+            entity_type="collection",
+            entity_id=collection.id,
+            detail={"job_id": job.id},
+        )
+        session.commit()
+        request.session["flash"] = ("success", "Candidate re-evaluation queued. It will not download anything.")
     return redirect(f"/collections/{collection_id}")
 
 
@@ -623,7 +726,9 @@ def select_candidate_form(
         collection = session.get(Collection, snapshot.collection_id) if snapshot else None
         if collection is None or collection.owner_id != user.id:
             raise HTTPException(status_code=404, detail="Candidate not found")
-        _, allowed, _ = assess_candidate(candidate, candidate_policy(collection))
+        _, allowed, _ = assess_candidate(
+            candidate, candidate_policy(collection), owner_channel_trusts(session, user.id)
+        )
         if not allowed:
             request.session["flash"] = ("error", "This collection's channel policy does not allow that candidate.")
             return redirect(f"/collections/{collection.id}")
@@ -639,6 +744,51 @@ def select_candidate_form(
         queue_candidate_download(session, owner=user, resolution=resolution)
         session.commit()
         return redirect(f"/collections/{snapshot.collection_id}" if snapshot else "/")
+
+
+@router.post("/entries/{entry_id}/queue-recommendation")
+def queue_recommendation_form(
+    entry_id: int,
+    request: Request,
+    _: Annotated[Principal, Depends(require_csrf)],
+) -> RedirectResponse:
+    with Session(request.app.state.engine) as session:
+        user = require_web_user(request, session)
+        entry = session.get(CollectionEntry, entry_id)
+        source_row = session.get(SourceRow, entry.source_row_id) if entry else None
+        snapshot = session.get(SourceSnapshot, source_row.snapshot_id) if source_row else None
+        collection = session.get(Collection, snapshot.collection_id) if snapshot else None
+        resolution = session.scalar(
+            select(CollectionResolution).where(CollectionResolution.collection_entry_id == entry_id)
+        )
+        if collection is None or collection.owner_id != user.id or resolution is None:
+            raise HTTPException(status_code=404, detail="Recommendation not found")
+        if resolution.status != "auto_selected" or resolution.candidate_asset_id is None:
+            raise HTTPException(status_code=409, detail="There is no unqueued recommendation for this item")
+        candidate = session.get(CandidateAsset, resolution.candidate_asset_id)
+        if candidate is None:
+            raise HTTPException(status_code=409, detail="Recommended candidate is unavailable")
+        _, allowed, _ = assess_candidate(
+            candidate, candidate_policy(collection), owner_channel_trusts(session, user.id)
+        )
+        if not allowed:
+            raise HTTPException(status_code=409, detail="The current channel policy no longer allows this candidate")
+        resolution.status = "approved"
+        resolution.selected_by_id = user.id
+        resolution.selected_at = datetime.now(UTC).replace(tzinfo=None)
+        candidate.status = "selected"
+        job = queue_candidate_download(session, owner=user, resolution=resolution)
+        write_audit(
+            session,
+            actor_id=user.id,
+            action="candidate.recommendation_approved",
+            entity_type="candidate_asset",
+            entity_id=candidate.id,
+            detail={"collection_entry_id": entry.id, "job_id": job.id},
+        )
+        session.commit()
+        request.session["flash"] = ("success", "Recommendation approved and queued for download.")
+        return redirect(f"/collections/{collection.id}")
 
 
 @router.get("/library", response_class=HTMLResponse)

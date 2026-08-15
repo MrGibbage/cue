@@ -13,6 +13,7 @@ from cue.models import (
     ApplicationSetting,
     AuditEvent,
     CandidateAsset,
+    ChannelTrust,
     Collection,
     CollectionEntry,
     CollectionResolution,
@@ -42,12 +43,28 @@ def candidate_policy(collection: Collection) -> dict[str, object]:
     return policy if isinstance(policy, dict) else {}
 
 
-def assess_candidate(candidate: CandidateAsset, policy: dict[str, object]) -> tuple[int, bool, list[str]]:
+def owner_channel_trusts(session: Session, owner_id: int) -> dict[str, ChannelTrust]:
+    """Return stable YouTube channel authority confirmations for one owner."""
+    return {
+        trust.channel_id: trust
+        for trust in session.scalars(
+            select(ChannelTrust).where(ChannelTrust.owner_id == owner_id, ChannelTrust.provider == "youtube")
+        )
+    }
+
+
+def assess_candidate(
+    candidate: CandidateAsset,
+    policy: dict[str, object],
+    channel_trusts: dict[str, ChannelTrust] | None = None,
+) -> tuple[int, bool, list[str]]:
     """Apply collection-only format/channel rules to persisted candidate evidence."""
     classifications = set(json.loads(candidate.classifications_json))
     channel_ids = {item for item in policy.get("channel_ids", []) if isinstance(item, str)}
     mode = policy.get("channel_mode") if isinstance(policy.get("channel_mode"), str) else "prefer"
-    trusted = candidate.uploader_id in channel_ids if candidate.uploader_id else False
+    collection_trusted = candidate.uploader_id in channel_ids if candidate.uploader_id else False
+    authority = channel_trusts.get(candidate.uploader_id) if candidate.uploader_id and channel_trusts else None
+    trusted = collection_trusted or authority is not None
     allowed = "wrong_song" not in classifications
     reasons: list[str] = []
     if mode == "only" and not trusted:
@@ -57,9 +74,12 @@ def assess_candidate(candidate: CandidateAsset, policy: dict[str, object]) -> tu
         allowed = False
         reasons.append("from an excluded channel")
     score = candidate.score
-    if trusted:
+    if collection_trusted:
         score += 20
         reasons.append("trusted collection channel")
+    if authority is not None:
+        score += 25
+        reasons.append(f"trusted {authority.authority} channel")
     if "official_music_video" in classifications:
         score += 10
         reasons.append("preferred format: official music video")
@@ -123,7 +143,11 @@ def rescore_recording_candidates(session: Session, recording: Recording) -> None
 
 
 def decide_resolution(
-    session: Session, entry: CollectionEntry, candidates: list[CandidateAsset], policy: dict[str, object] | None = None
+    session: Session,
+    entry: CollectionEntry,
+    candidates: list[CandidateAsset],
+    policy: dict[str, object] | None = None,
+    channel_trusts: dict[str, ChannelTrust] | None = None,
 ) -> CollectionResolution:
     """Apply the strict default policy without downloading anything."""
     resolution = session.scalar(
@@ -135,9 +159,10 @@ def decide_resolution(
     policy = policy or {}
     clear = []
     for candidate in candidates:
-        effective_score, allowed, _ = assess_candidate(candidate, policy)
+        effective_score, allowed, _ = assess_candidate(candidate, policy, channel_trusts)
         trusted_ids = {item for item in policy.get("channel_ids", []) if isinstance(item, str)}
         trusted = candidate.uploader_id in trusted_ids if candidate.uploader_id else False
+        trusted = trusted or bool(candidate.uploader_id and channel_trusts and candidate.uploader_id in channel_trusts)
         if (
             allowed
             and "official_music_video" in json.loads(candidate.classifications_json)
@@ -175,6 +200,25 @@ def queue_candidate_download(session: Session, *, owner: User, resolution: Colle
     if existing is not None:
         return existing
     job = Job(owner_id=owner.id, kind="download_candidate", payload_json=payload)
+    session.add(job)
+    session.flush()
+    return job
+
+
+def queue_collection_reassessment(session: Session, *, owner: User, collection: Collection) -> Job:
+    """Queue a no-download re-evaluation of already stored candidate evidence."""
+    payload = json.dumps({"collection_id": collection.id}, sort_keys=True)
+    existing = session.scalar(
+        select(Job).where(
+            Job.owner_id == owner.id,
+            Job.kind == "reassess_collection_candidates",
+            Job.status.in_(("queued", "running")),
+            Job.payload_json == payload,
+        )
+    )
+    if existing is not None:
+        return existing
+    job = Job(owner_id=owner.id, kind="reassess_collection_candidates", payload_json=payload)
     session.add(job)
     session.flush()
     return job

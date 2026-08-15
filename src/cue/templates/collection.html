@@ -61,6 +61,13 @@
   <br><br><button type="button" class="secondary" onclick="copyTextFrom('llm-json-instructions', this)">Copy instructions</button>
 </details>
 
+<details class="panel" style="margin-top:1rem" open>
+  <summary><strong>Channel trust and safe re-ranking</strong></summary>
+  <p class="muted">Trust is attached to the stable YouTube channel ID, not its display name. Confirm an artist, VEVO, label, or distributor channel from a visible candidate below, then re-evaluate stored results. Re-evaluation creates recommendations only; it never starts a download.</p>
+  {% if channel_trusts %}<p class="muted">Your trusted channels: {% for trust in channel_trusts %}<code>{{ trust.channel_name or trust.channel_id }}</code> ({{ trust.authority }}){% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+  {% if latest %}<form class="inline" method="post" action="/collections/{{ collection.id }}/candidate-reassessments"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Re-evaluate stored candidates</button></form>{% endif %}
+</details>
+
 <details class="panel" style="margin-top:1rem">
   <summary><strong>Candidate channel policy</strong></summary>
   <p class="muted">Channel IDs are stable YouTube channel identifiers. Use a preferred list to boost trusted artist, label, or distributor channels; “only” is a hard selection/download constraint.</p>

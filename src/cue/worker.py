@@ -21,6 +21,7 @@ from cue.models import (
     Collection,
     CollectionEntry,
     CollectionResolution,
+    CollectionVersion,
     LibraryImport,
     LibraryImportRow,
     PlaylistExport,
@@ -36,6 +37,7 @@ from cue.services import (
     candidate_policy,
     decide_resolution,
     get_download_batch_size,
+    owner_channel_trusts,
     queue_candidate_download,
     rescore_recording_candidates,
     store_youtube_candidates,
@@ -259,7 +261,9 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
             collection = session.get(Collection, snapshot.collection_id)
             if collection is None:
                 raise RuntimeError("Collection not found")
-            resolution = decide_resolution(session, entry, candidates, candidate_policy(collection))
+            resolution = decide_resolution(
+                session, entry, candidates, candidate_policy(collection), owner_channel_trusts(session, owner.id)
+            )
             if resolution.status == "review":
                 review_count += 1
             if resolution.status == "auto_selected":
@@ -281,6 +285,56 @@ def process_job(session: Session, job_id: int, settings: Settings) -> None:
                 f"{review_count} item(s) in source snapshot #{snapshot.id} need a video decision.",
                 "warning",
             )
+    elif job.kind == "reassess_collection_candidates":
+        collection_id = payload.get("collection_id")
+        if not isinstance(collection_id, int):
+            raise RuntimeError("Invalid collection reassessment job payload")
+        collection = session.get(Collection, collection_id)
+        if collection is None or collection.owner_id != job.owner_id:
+            raise RuntimeError("Collection not found")
+        entries = list(
+            session.scalars(
+                select(CollectionEntry)
+                .join(CollectionVersion, CollectionEntry.collection_version_id == CollectionVersion.id)
+                .where(CollectionVersion.collection_id == collection.id)
+                .order_by(CollectionEntry.ordinal)
+            )
+        )
+        trusts = owner_channel_trusts(session, job.owner_id)
+        job.progress_total = len(entries)
+        job.progress_current = 0
+        job.progress_message = "Re-evaluating stored candidates"
+        session.commit()
+        recommendations = 0
+        for ordinal, entry in enumerate(entries, start=1):
+            resolution = session.scalar(
+                select(CollectionResolution).where(CollectionResolution.collection_entry_id == entry.id)
+            )
+            # A person-approved or published asset is immutable evidence; reassessment is read-only for it.
+            if resolution is None or resolution.status not in {"published", "selected", "approved"}:
+                candidates = list(
+                    session.scalars(
+                        select(CandidateAsset)
+                        .where(CandidateAsset.recording_id == entry.recording_id)
+                        .order_by(CandidateAsset.score.desc(), CandidateAsset.id)
+                    )
+                )
+                resolution = decide_resolution(session, entry, candidates, candidate_policy(collection), trusts)
+                if resolution.status == "auto_selected":
+                    recommendations += 1
+            recording = session.get(Recording, entry.recording_id)
+            job.progress_current = ordinal
+            job.progress_message = f"{recording.title if recording else entry.id}: re-evaluated"
+            session.commit()
+        job.progress_message = f"Re-evaluation complete: {recommendations} recommendation(s), none queued"
+        write_audit(
+            session,
+            actor_id=job.owner_id,
+            action="collection.candidates_reassessed",
+            entity_type="collection",
+            entity_id=collection.id,
+            detail={"job_id": job.id, "recommendations": recommendations},
+        )
     elif job.kind == "download_candidate":
         candidate_id, resolution_id = payload.get("candidate_id"), payload.get("resolution_id")
         if not isinstance(candidate_id, int) or not isinstance(resolution_id, int):

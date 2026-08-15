@@ -15,7 +15,7 @@ Cue keeps these questions distinct:
    artist/title. Wrong-song candidates are rejected.
 2. **Format:** official music video, lyric video, live performance, remaster,
    audio, and other review-required formats.
-3. **Publisher authority:** observed artist-channel name and explicitly trusted
+3. **Publisher authority:** observed artist-channel name and owner-confirmed
    stable YouTube channel IDs.
 4. **Collection policy:** the way a particular collection uses those signals.
 
@@ -42,6 +42,22 @@ Explicitly trusted channels can satisfy the strict automatic-selection
 authority requirement only when the candidate is also a correct-song official
 music video. Other formats remain review-only.
 
+## Named channel trust and safe re-ranking
+
+2026-08-15: Cue also has an owner-scoped **Channel trust and safe re-ranking**
+workflow. From a candidate that is visible in one of the owner's collections,
+the owner can classify its stable channel ID as an artist, VEVO, label, or
+distributor. The decision and the observed channel name are audited; trust is
+never inferred from a mutable display name alone.
+
+Trust affects the effective candidate score and can supply the strict authority
+evidence for a correct-song official music video. It does not change an
+already-published asset or a person's selection. A separate durable
+`reassess_collection_candidates` job re-evaluates stored candidates with the
+new evidence, persists progress, and produces `auto_selected` recommendations.
+That job queues zero downloads. Each recommendation has its own explicit
+**Approve & queue recommendation** action.
+
 ## Ranking behavior
 
 The default music-video policy ranks a correct-song official music video above
@@ -67,7 +83,7 @@ not sufficient. That work needs a channel URL/ID query strategy, query
 provenance, combined pagination/deduplication, and clear reporting of each
 channel searched.
 
-Future work also includes named channel records, label/network relationships,
-format profiles (official-video, live-performance, broad), and an owner
-workflow for promoting a reviewed channel to trusted status. All automatic
-trust remains explicit, auditable, and overrideable.
+Future work includes channel/network relationships, format profiles
+(official-video, live-performance, broad), channel-specific discovery, and
+editing/removing a trust relationship in the dashboard. All automatic trust
+remains explicit, auditable, and overrideable.

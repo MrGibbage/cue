@@ -224,6 +224,11 @@ named trust relationships remain follow-up work.
 
 See [candidate-policy.md](candidate-policy.md).
 
+2026-08-15: Owner-confirmed named channel trust and durable, no-download
+candidate re-ranking are implemented. A recommendation still requires a
+separate explicit queue approval; existing published and manual selections are
+preserved.
+
 ## MVP decision record
 
 ### Product direction — 2026-08-04
